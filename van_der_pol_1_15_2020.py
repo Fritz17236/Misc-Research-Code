@@ -36,7 +36,8 @@ class VanderPolSim:
         def x_dot(y):
             return y
     
-        return np.asarray([x_dot(y), y_dot(x, y, mu)]) 
+        num = np.asarray([x_dot(y), y_dot(x, y, mu)])
+        return num
     
     def run_sim(self):
         '''
@@ -51,6 +52,7 @@ class VanderPolSim:
 
 
 ## Data Analysis & Helper Functions
+
 def get_limit_cycle(data, indices = False):
     ''' 
     Given a sim data struct, compute & return the limit cycle as a
@@ -139,8 +141,10 @@ def eigen_decomp(data, mu):
     
     return eig_dec      
 
+plot_single_limit_cycle = False
 
-mus = np.asarray([1])
+
+mus = np.asarray([4])
 ## Run Simulation
 # sweep over various values of mu
 #mus = np.asarray([0, 1, 4, 8])
@@ -156,80 +160,123 @@ for mu in mus:
 
     lc_x, lc_y, lc_t = get_limit_cycle(data) # get exactly 1 limit cycle
     
-    ## Plot Phase Space
+
+
+if (plot_single_limit_cycle):
+    ## Plotting
+    plt.figure(0)
+    plt.plot(xs, ys)
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.title("Simulation Trajectory mu = %.2f" %mu)
+    
     plt.figure(1)
+    plt.xlabel("x")
+    plt.ylabel("y")
     plt.plot(lc_x, lc_y,label='mu = %.1f' % mu)
-
-
-
-## Plotting
-plt.figure(1)
-plt.xlabel("x")
-plt.ylabel("y")
-plt.legend()
-plt.title("Limit Cycle Phase Portrait")
-ed = eigen_decomp(data, mu)
-
- 
-plt.figure(2)
-plt.plot(ts, ed["l_neg"],label= '$\lambda_{-}$')
-plt.plot(ts, ed["l_pos"],label= '$\lambda_{+}$')
-plt.xlabel('t')
-plt.ylabel('$Re (\lambda) $')
-plt.legend()
-
-plt.figure(3)
-xs, ys, _, idxs = get_limit_cycle(data, indices=True)
-
-plt.quiver(xs, ys, ed["evec_neg"][0,idxs], ed["evec_neg"][1,idxs], ed["l_neg"][idxs], scale = 8, headwidth = 6)
-plt.title("Linear Stability (Negative Root Eigenvalue")
-plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
-plt.colorbar()
-
-plt.figure(4)
-plt.quiver(xs, ys, ed["evec_pos"][0,idxs], ed["evec_pos"][1,idxs], ed["l_pos"][idxs], scale = 8, headwidth = 6)
-plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
-plt.title("Linear Stability (Positive Root Eigenvalue")
-plt.colorbar()
-
-delta = .1  # Perturbation Strength
-
-# Project a horizontal perturbation x onto the eigvecs scaled by eigvals & quiver plot 
-pert_x = delta * np.asarray([1, 0])
-pert_y = delta * np.asarray([0, 1])
-
-net_x = np.zeros((2, len(idxs)))
-net_y = np.zeros((2, len(idxs)))
-
-for i, idx in enumerate(idxs):
-    net_x[:,i] = (
-        ed["l_pos"][idx] * pert_x@ed["evec_pos"][:,idx] # project onto E-vecs & scale
-     + ed["l_neg"][idx] * pert_x@ed["evec_neg"][:,idx]
-     )
+    plt.legend()
+    plt.title("Limit Cycle Phase Portrait")
+    
+    ed = eigen_decomp(data, mu)
      
-    net_y[:,i] = (
-        ed["l_pos"][idx] * pert_y@ed["evec_pos"][:,idx] # project onto E-vecs & scale
-     + ed["l_neg"][idx] * pert_y@ed["evec_neg"][:,idx]
-     ) 
+    plt.figure(2)
+    plt.plot(ts, ed["l_neg"],label= '$\lambda_{-}$')
+    plt.plot(ts, ed["l_pos"],label= '$\lambda_{+}$')
+    plt.xlabel('t')
+    plt.ylabel('$Re (\lambda) $')
+    plt.legend()
+    
+    plt.figure(3)
+    xs, ys, _, idxs = get_limit_cycle(data, indices=True)
+    
+    plt.quiver(xs, ys, ed["evec_neg"][0,idxs], ed["evec_neg"][1,idxs], ed["l_neg"][idxs], scale = 8, headwidth = 6)
+    plt.title("Linear Stability (Negative Root Eigenvalue")
+    plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
+    plt.colorbar()
+    
+    plt.figure(4)
+    plt.quiver(xs, ys, ed["evec_pos"][0,idxs], ed["evec_pos"][1,idxs], ed["l_pos"][idxs], scale = 8, headwidth = 6)
+    plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
+    plt.title("Linear Stability (Positive Root Eigenvalue")
+    plt.colorbar()
+    
+    delta = .1  # Perturbation Strength
+    
+    # Project a horizontal perturbation x onto the eigvecs scaled by eigvals & quiver plot 
+    pert_x = delta * np.asarray([1, 0])
+    pert_y = delta * np.asarray([0, 1])
+    
+    net_x = np.zeros((2, len(idxs)))
+    net_y = np.zeros((2, len(idxs)))
+    
+    for i, idx in enumerate(idxs):
+        net_x[:,i] = (
+            np.exp(ed["l_pos"][idx]) * pert_x@ed["evec_pos"][:,idx] # project onto E-vecs & scale
+         + np.exp(ed["l_neg"][idx]) * pert_x@ed["evec_neg"][:,idx]
+         )
+         
+        net_y[:,i] = (
+            np.exp(ed["l_pos"][idx]) * pert_y@ed["evec_pos"][:,idx] # project onto E-vecs & scale
+         + np.exp(ed["l_neg"][idx]) * pert_y@ed["evec_neg"][:,idx]
+         ) 
+    
+    plt.figure(5)
+    plt.quiver(xs, ys, net_x[0,:], net_x[1,:], np.log(np.linalg.norm(net_x,axis=0)/delta), scale = 1, headwidth = 6)
+    plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
+    plt.title("X - Perturbation Net Direction & Strength")
+    cbar = plt.colorbar()
+    cbar.set_label("$log(||A\delta|| / ||\delta||)$")
     
     
+    plt.figure(6)
+    plt.quiver(xs, ys, net_y[0,:], net_y[1,:], np.log(np.linalg.norm(net_y,axis=0)/delta), scale = 1, headwidth = 6)
+    plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
+    plt.title("Y - Perturbation Net Direction & Strength")
+    cbar = plt.colorbar()
+    cbar.set_label("$log(||A\delta|| / ||\delta||)$")
+    
+    plt.show()
 
 
-
-plt.figure(5)
-plt.quiver(xs, ys, net_x[0,:], net_x[1,:], np.linalg.norm(net_x,axis=0)/delta, scale = 1, headwidth = 6)
-plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
-plt.title("X - Perturbation Net Direction & Strength")
-cbar = plt.colorbar()
-cbar.set_label("$||A\delta|| / ||\delta||$")
+# for each point along the limit cycle, perturb in x
 
 
-plt.figure(6)
-plt.quiver(xs, ys, net_y[0,:], net_y[1,:], np.linalg.norm(net_y,axis=0)/delta, scale = 1, headwidth = 6)
-plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
-plt.title("Y - Perturbation Net Direction & Strength")
-cbar = plt.colorbar()
-cbar.set_label("$||A\delta|| / ||\delta||$")
+def get_latent_phase(lc_x, lc_y, lc_t, x, y):
+    ''' 
+    Given a point (x,y) in the phase plane,  compute its latent phase.
+    The latent phase is defined as the phase of the limit cycle corresponding 
+    to the intersection of the trajectory starting at (x,y) with the limit cycle
+    at t--> infinity. 
+    Caller must provide 3 vectors of x and y coords of limit cycle lc_x, lc_y,
+    and lc_t times for each point.
+    '''
+    
+    # start simulation at initial condition & run simulation for T
+    sim = VanderPolSim(x0 = x, y0 = y)
+    data = sim.run_sim()
+    x_traj = data.y[0,:]
+    y_traj = data.y[1,:]
+    
+    conv_idx = 0
+    plt.figure()
+    plt.plot(x_traj,y_traj)
+    plt.show()
+    #while not converged(sim state, limit cycle)
+        # compute next sim step & update
+        
+     
+    # once converged, note time and location.
+    
+    # given time and point x,y of intersection, compute the  
+    
+    
+    
+# run simulation to determine when min(||state traj(x,y) - limit_cycle(a,b, t)||) < delta 
+# given this time, compute the latent phase:
+    # theta( w * t + phi_lat ) =theta( limit_cycle(a,b, t) )
+    
+      
+get_latent_phase(lc_x, lc_y, lc_t, 3, 0)
 
-plt.show()
+
 
