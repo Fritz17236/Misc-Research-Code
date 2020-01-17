@@ -9,7 +9,7 @@ from scipy.integrate import solve_ivp
 from scipy.signal import argrelextrema
 import cmath
 
-
+## Class Definitions
 class VanderPolSim:
     '''Simulation object - feed parameters and returns simulation datat structure'''
     def __init__(self, T = 50, dt = .01, mu = 3, x0 = .5, y0 = .5):
@@ -50,13 +50,15 @@ class VanderPolSim:
         )
 
 
-def get_limit_cycle(data):
+## Data Analysis & Helper Functions
+def get_limit_cycle(data, indices = False):
     ''' 
     Given a sim data struct, compute & return the limit cycle as a
     (3, N) array where N is the number of data points in 1 period.
     (2 state variables & time variable data)
     This code assumes the 2nd half of data is exclusive limit cycle data
     i.e. the system is in steady state oscillation with no transients.
+    Indices are optionally returned if set to true, additional tuple val
     '''
     # take 2nd half of data
     xs = data.y[0,:]
@@ -72,10 +74,12 @@ def get_limit_cycle(data):
     
     # this gives us a period of oscillation, return the state for times in this period
     idxs = np.arange(extrema[-2],extrema[-1] + 1)
-    return (xs[idxs], ys[idxs], ts[idxs])
     
-
-
+    if (indices):
+        return (xs[idxs], ys[idxs], ts[idxs], idxs)
+    else:
+        return (xs[idxs], ys[idxs], ts[idxs])
+    
 def l_pos(x, y, mu):
     ''' eigenvalue 0 of linear approximation'''
     num = mu * (1 - x**2) + cmath.sqrt(mu**2 * (1 - x**2)**2 + 4 * (2*mu*x*y - 1) )
@@ -86,10 +90,60 @@ def l_neg(x, y, mu):
     num = mu * (1 - x**2) - cmath.sqrt(mu**2 * (1 - x**2)**2 + 4 * (2*mu*x*y - 1) )
     return np.real(num / 2)
 
-## Generate Data
+def evec_pos(x, y, mu):
+    ''' get the eigenvector associated with positive eigval '''
+    vec = np.asarray([1, l_pos(x, y, mu)])
+    return vec / np.linalg.norm(vec)
+
+def evec_neg(x, y, mu):
+    ''' get the other eigenvector '''
+    vec = np.asarray([
+        l_neg(x, y , mu) - mu * (1 - x**2),
+        2 * mu * x * y - 1
+        ])
+    return vec / np.linalg.norm(vec)
+
+def eigen_decomp(data, mu):
+    ''' 
+    Given simulation data, return the eigendecomposition of the 
+    linearization at each point around the limit cycle.
+    Returns data as dictionary with the following entries:
+    eig["l_neg"] negative root eigenvalues at each of the N data points
+    eig["l_pos"] positive root eigenvalues
+    eig["evec_neg"] eigenvector associated with l_neg
+    eig["evec_pos"] eigenvector associated with l_pos
+    '''
+    #loop through data
+    xs = data.y[0,:]
+    ys = data.y[1,:]
+    N = len(xs)
+    
+    l_negs = np.zeros((N,1))
+    l_poss = np.zeros((N,1))
+    evec_negs = np.zeros((2,N))
+    evec_poss = np.zeros((2,N))
+    
+    for i in np.arange(N):
+        l_negs[i] = l_neg(xs[i], ys[i], mu)
+        l_poss[i] = l_pos(xs[i], ys[i], mu)
+        
+        evec_negs[:,i] = evec_neg(xs[i], ys[i], mu)
+        evec_poss[:,i] = evec_pos(xs[i], ys[i], mu)
+    
+    eig_dec = {
+        "l_neg" : l_negs,
+        "l_pos" : l_poss,
+        "evec_neg" : evec_negs,
+        "evec_pos" : evec_poss
+        }  
+    
+    return eig_dec      
+
+
+mus = np.asarray([1])
+## Run Simulation
 # sweep over various values of mu
 #mus = np.asarray([0, 1, 4, 8])
-mus = np.asarray([4])
 for mu in mus:
     sim = VanderPolSim(mu = mu)
     data = sim.run_sim()
@@ -106,31 +160,76 @@ for mu in mus:
     plt.figure(1)
     plt.plot(lc_x, lc_y,label='mu = %.1f' % mu)
 
+
+
+## Plotting
 plt.figure(1)
 plt.xlabel("x")
 plt.ylabel("y")
 plt.legend()
+plt.title("Limit Cycle Phase Portrait")
+ed = eigen_decomp(data, mu)
+
+ 
+plt.figure(2)
+plt.plot(ts, ed["l_neg"],label= '$\lambda_{-}$')
+plt.plot(ts, ed["l_pos"],label= '$\lambda_{+}$')
+plt.xlabel('t')
+plt.ylabel('$Re (\lambda) $')
+plt.legend()
+
+plt.figure(3)
+xs, ys, _, idxs = get_limit_cycle(data, indices=True)
+
+plt.quiver(xs, ys, ed["evec_neg"][0,idxs], ed["evec_neg"][1,idxs], ed["l_neg"][idxs], scale = 8, headwidth = 6)
+plt.title("Linear Stability (Negative Root Eigenvalue")
+plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
+plt.colorbar()
+
+plt.figure(4)
+plt.quiver(xs, ys, ed["evec_pos"][0,idxs], ed["evec_pos"][1,idxs], ed["l_pos"][idxs], scale = 8, headwidth = 6)
+plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
+plt.title("Linear Stability (Positive Root Eigenvalue")
+plt.colorbar()
+
+delta = .1  # Perturbation Strength
+
+# Project a horizontal perturbation x onto the eigvecs scaled by eigvals & quiver plot 
+pert_x = delta * np.asarray([1, 0])
+pert_y = delta * np.asarray([0, 1])
+
+net_x = np.zeros((2, len(idxs)))
+net_y = np.zeros((2, len(idxs)))
+
+for i, idx in enumerate(idxs):
+    net_x[:,i] = (
+        ed["l_pos"][idx] * pert_x@ed["evec_pos"][:,idx] # project onto E-vecs & scale
+     + ed["l_neg"][idx] * pert_x@ed["evec_neg"][:,idx]
+     )
+     
+    net_y[:,i] = (
+        ed["l_pos"][idx] * pert_y@ed["evec_pos"][:,idx] # project onto E-vecs & scale
+     + ed["l_neg"][idx] * pert_y@ed["evec_neg"][:,idx]
+     ) 
+    
+    
+
+
+
+plt.figure(5)
+plt.quiver(xs, ys, net_x[0,:], net_x[1,:], np.linalg.norm(net_x,axis=0)/delta, scale = 1, headwidth = 6)
+plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
+plt.title("X - Perturbation Net Direction & Strength")
+cbar = plt.colorbar()
+cbar.set_label("$||A\delta|| / ||\delta||$")
+
+
+plt.figure(6)
+plt.quiver(xs, ys, net_y[0,:], net_y[1,:], np.linalg.norm(net_y,axis=0)/delta, scale = 1, headwidth = 6)
+plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
+plt.title("Y - Perturbation Net Direction & Strength")
+cbar = plt.colorbar()
+cbar.set_label("$||A\delta|| / ||\delta||$")
+
 plt.show()
- 
- 
- 
- 
- 
-# plt.figure(2)
-# plt.xlabel('t')
-# plt.ylabel('L_neg')
-# plt.legend()
-# 
-# plt.show()
-# 
-#     # compute eigenvalues
-#     ls_p = [l_pos(xs[j],ys[j],mu) for j in np.arange(len(xs))]
-#     ls_n = [l_neg(xs[j],ys[j],mu) for j in np.arange(len(xs))]
-# 
-# 
-#     # x-component of neg eigvec
-#     eigvec_xs = [-(mu - mu*xs[j]**2 + cmath.sqrt(-4+mu**2 - 2*mu**2*xs[j]**2 + mu**2*xs[j]**4 + 8*mu*xs[j]*ys[j]))
-#                  / (2*(-1 + 2*mu*xs[j]*ys[j]))
-#                  for j in np.arange(len(xs))]
-# 
 
