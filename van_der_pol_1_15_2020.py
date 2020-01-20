@@ -319,6 +319,32 @@ plt.show()
 
 #Workspace down here
 
+def converged(lc_x, lc_y, x, y, delta):
+    '''
+    Given a limit cycle specified by lc_x, lc_y, a point x,y and some distance delta,
+    check if the distance of the closest point on the limit cycle to (x,y) is within delta.
+    '''
+    # compute the distance between (x,y) and each point on the limit cycle
+    N = len(lc_x)
+    
+    xs = np.ones((N,)) * x
+    ys = np.ones((N,)) * y
+    
+    dxs = lc_x - xs
+    dys = lc_y - ys
+    
+    d_squareds = np.square(dxs)+ np.square(dys)
+    
+    min_dist = np.min(d_squareds)
+    
+    if min_dist <= delta**2:
+        return True
+    else:
+        return False
+    
+         
+     
+
 def get_latent_phase(lc_x, lc_y, lc_t, x, y):
     ''' 
     Given a point (x,y) in the phase plane,  compute its latent phase.
@@ -335,7 +361,7 @@ def get_latent_phase(lc_x, lc_y, lc_t, x, y):
     x_traj = data.y[0,:]
     y_traj = data.y[1,:]
     
-    conv_idx = 0
+    conv_idx = -1
     plt.figure()
     plt.plot(x_traj,y_traj)
     plt.show()
@@ -347,8 +373,7 @@ def get_latent_phase(lc_x, lc_y, lc_t, x, y):
     
     # given time and point x,y of intersection, compute the  
     
-    
-    
+
 # run simulation to determine when min(||state traj(x,y) - limit_cycle(a,b, t)||) < delta 
 # given this time, compute the latent phase:
     # theta( w * t + phi_lat ) =theta( limit_cycle(a,b, t) )
