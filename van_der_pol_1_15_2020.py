@@ -2,6 +2,11 @@
 
 # Chris Fritz 1/15/2020
 
+#TODO: 
+# Plot nullclines
+# Modify perturb_limit_cycle to only iterate ver provided indices
+# Compute Latent Phase
+
 ##import statements
 import numpy as np
 import matplotlib.pyplot as plt
@@ -144,7 +149,7 @@ def eigen_decomp(data):
         }  
     return eig_dec      
 
-def perturb_limit_cycle(data, u, step = 100,  noise = False, noise_str = 1):
+def perturb_limit_cycle(data, u, indices = [-1],  noise = False, noise_str = 1):
     '''
     Given data 
     and a perturbation vector u, compute the limit cycle, apply perturbation u to every
@@ -155,10 +160,10 @@ def perturb_limit_cycle(data, u, step = 100,  noise = False, noise_str = 1):
     # compute limit cycle
     lc_x, lc_y, _ = get_limit_cycle(data)
     
-    # for each point in limit cycle,
+    # for each point in the limit cycle specified by indices,
     N = len(lc_x)
     mu = data.mu
-    T = 1 # adjust length to determine speed of simulation (number of total points) 
+    T = data.T # adjust length to determine speed of simulation (number of total points) 
     dt = data.dt
     
     if noise:
@@ -167,18 +172,16 @@ def perturb_limit_cycle(data, u, step = 100,  noise = False, noise_str = 1):
     
     
 
-    # perturb point by u
-    steps = np.arange(0,N, step)
-        
-    pert_trajs = np.zeros((2, int(T/dt), len(steps)))
+    # perturb point by u        
+    pert_trajs = np.zeros((2, int(T/dt), len(indices)))
     
-    for i, s in enumerate(steps):
+    for lc_idx, i in enumerate(indices):
         data = VanderPolSim(
             mu = mu,
             T = T,
             dt = dt,
-            x0 = lc_x[s],
-            y0 = lc_y[s]
+            x0 = lc_x[lc_idx],
+            y0 = lc_y[lc_idx]
              ).run_sim()
         pert_trajs[:,:,i] = data.y
         
@@ -191,35 +194,53 @@ def perturb_limit_cycle(data, u, step = 100,  noise = False, noise_str = 1):
 
 ## Run Simulation & set parameters here
 
-mu = 32
-T = 2*50
-dt = .001
+
+def dist_to_limit_cycle(lc_x, lc_y, x, y):
+    '''
+    Compute the distance of (x,y) to the limit cycle (lc_x, lc_y),
+    defined here as the minimum distamce of (x,y) to any point on the 
+    limit cycle defined by (lc_x,lc_y)
+    '''
+    N = len(lc_x)
+    
+    xs = np.ones((N,)) * x
+    ys = np.ones((N,)) * y
+    
+    dxs = lc_x - xs
+    dys = lc_y - ys
+    
+    d_squareds = np.square(dxs)+ np.square(dys)
+    
+    min_dist = np.min(d_squareds)
+    
+    return np.sqrt(min_dist)
+    
+
+mu = 5
+T = 50
+dt = .0001
 sim = VanderPolSim(mu = mu, T = T, dt = dt)
 data = sim.run_sim()
-
-
+ts = data.t
+xs = data.y[0,:]
+ys = data.y[1,:]
 
 ## Data Analysis & Plotting
 # Configure by setting boolean values 
-plot_trajectory = True    # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation
-plot_limit_cycle = True  # Assuming at least 2 full periods of oscillation, compute & plot the limit cycle trajectory
-
-##  Each of the below requires plot_limit_cycle = True
-plot_eigen_decomp = True # Compute the eigenvalues/eigenvectors along the limit cycle & display them
-plot_perturbation_analysis = True # requires plot_eigen_decomp = True : comment here 
-plot_noisy_start = False  # comment here
-
+plot_trajectory = False    # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation
+plot_limit_cycle = False  # Assuming at least 2 full periods of oscillation, compute & plot the limit cycle trajectory
+plot_eigen_decomp = False # Compute the eigenvalues/eigenvectors along the limit cycle & display them
+plot_perturbation_analysis = False # comment here 
+plot_noisy_start = True  # comment here
 
 if (plot_trajectory):    
-    ts = data.t
-    xs = data.y[0,:]
-    ys = data.y[1,:]
     
     plt.figure()
-    plt.plot(xs, ys)
+    plt.scatter(xs, ys)
     plt.xlabel("x")
     plt.ylabel("y")
     plt.title("Phase Space mu = %.2f" %mu)
+    
     
     plt.figure()
     plt.plot(ts,xs)
@@ -234,7 +255,7 @@ if (plot_trajectory):
     plt.title("y trace")
         
 if (plot_limit_cycle):
-    lc_x, lc_y, lc_t = get_limit_cycle(data) # get exactly 1 limit cycle
+    lc_x, lc_y, lc_t, idxs = get_limit_cycle(data, indies = True) # get exactly 1 limit cycle
     plt.figure()
     plt.xlabel("x")
     plt.ylabel("y")
@@ -242,7 +263,7 @@ if (plot_limit_cycle):
     plt.legend()
     plt.title("Limit Cycle Phase Portrait")
     
-if (plot_limit_cycle and plot_eigen_decomp):
+if (plot_eigen_decomp):
 
     ed = eigen_decomp(data)
      
@@ -254,20 +275,22 @@ if (plot_limit_cycle and plot_eigen_decomp):
     plt.legend()
     
     plt.figure()
-    xs, ys, _, idxs = get_limit_cycle(data, indices=True)
     
-    plt.quiver(xs, ys, ed["evec_neg"][0,idxs], ed["evec_neg"][1,idxs], ed["l_neg"][idxs], scale = 8, headwidth = 6)
+    if not (plot_limit_cycle):
+        lc_x, lc_y, lc_t, idxs = get_limit_cycle(data, indices=True)
+    
+    plt.quiver(lc_x, lc_y, ed["evec_neg"][0,idxs], ed["evec_neg"][1,idxs], ed["l_neg"][idxs], scale = 8, headwidth = 6)
     plt.title("Linear Stability (Negative Root Eigenvalue")
     plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
     plt.colorbar()
     
     plt.figure()
-    plt.quiver(xs, ys, ed["evec_pos"][0,idxs], ed["evec_pos"][1,idxs], ed["l_pos"][idxs], scale = 8, headwidth = 6)
+    plt.quiver(lc_x, lc_y, ed["evec_pos"][0,idxs], ed["evec_pos"][1,idxs], ed["l_pos"][idxs], scale = 8, headwidth = 6)
     plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
     plt.title("Linear Stability (Positive Root Eigenvalue")
     plt.colorbar()
     
-if (plot_limit_cycle and plot_eigen_decomp and plot_perturbation_analysis):
+if (plot_perturbation_analysis):
     delta = .1  # Perturbation Strength
     
     # Project a horizontal perturbation x onto the eigvecs scaled by eigvals & quiver plot 
@@ -303,15 +326,29 @@ if (plot_limit_cycle and plot_eigen_decomp and plot_perturbation_analysis):
     cbar = plt.colorbar()
     cbar.set_label("$log(||A\delta|| / ||\delta||)$")
     
-if (plot_limit_cycle and plot_noisy_start):
+if (plot_noisy_start):
+    
+    if not plot_limit_cycle:
+        lc_x, lc_y, _ = get_limit_cycle(data)
+    
     epsilon = .5  # perturbation strength
     u = epsilon * np.asarray([1, 0])
     pts = perturb_limit_cycle(data, u)
-    plt.figure()
+    mins = np.zeros((pts.shape[1],))
+    plt.figure()    
     for i in np.arange(pts.shape[2]):
         plt.plot(pts[0,:,i],pts[1,:,i])
-    lc_x, lc_y, _ = get_limit_cycle(data)
+
+        for j in np.arange(pts.shape[1]):
+            mins[j] = dist_to_limit_cycle(lc_x, lc_y, pts[0,j,i], pts[1,j,i])
+                 
     plt.plot(lc_x,lc_y,c='red')
+    
+    plt.figure()
+    plt.plot(ts,mins)
+        
+
+
     
 plt.show()
 
@@ -319,31 +356,19 @@ plt.show()
 
 #Workspace down here
 
+
+
+
 def converged(lc_x, lc_y, x, y, delta):
     '''
     Given a limit cycle specified by lc_x, lc_y, a point x,y and some distance delta,
     check if the distance of the closest point on the limit cycle to (x,y) is within delta.
     '''
-    # compute the distance between (x,y) and each point on the limit cycle
-    N = len(lc_x)
-    
-    xs = np.ones((N,)) * x
-    ys = np.ones((N,)) * y
-    
-    dxs = lc_x - xs
-    dys = lc_y - ys
-    
-    d_squareds = np.square(dxs)+ np.square(dys)
-    
-    min_dist = np.min(d_squareds)
-    
-    if min_dist <= delta**2:
+    if dist_to_limit_cycle(lc_x, lc_y, x, y) <= delta:
         return True
     else:
         return False
-    
          
-     
 
 def get_latent_phase(lc_x, lc_y, lc_t, x, y):
     ''' 
