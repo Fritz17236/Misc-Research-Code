@@ -113,7 +113,7 @@ def evec_neg(x, y, mu):
         ])
     return vec / np.linalg.norm(vec)
 
-def eigen_decomp(data):
+def eigen_decomp(data, limit_cycle = True):
     ''' 
     Given simulation data, return the eigendecomposition of the 
     linearization at each point around the limit cycle.
@@ -122,10 +122,15 @@ def eigen_decomp(data):
     eig["l_pos"] positive root eigenvalues
     eig["evec_neg"] eigenvector associated with l_neg
     eig["evec_pos"] eigenvector associated with l_pos
+    If limit_cycle is true, only return the eigenvalue along a computed limit
+    cycle as opposed to the entire trajectory of data
     '''
     #loop through data
-    xs = data.y[0,:]
-    ys = data.y[1,:]
+    if limit_cycle:
+        xs, ys, _ = get_limit_cycle(data)
+    else:
+        xs = data.y[0,:]
+        ys = data.y[1,:]
     mu = data.mu
     N = len(xs)
     
@@ -149,7 +154,7 @@ def eigen_decomp(data):
         }  
     return eig_dec      
 
-def perturb_limit_cycle(data, u, indices = [-1],  noise = False, noise_str = 1):
+def perturb_limit_cycle(data, lc_x, lc_y, u, indices = [-1],  noise = False, noise_str = 1):
     '''
     Given data 
     and a perturbation vector u, compute the limit cycle, apply perturbation u to every
@@ -157,9 +162,6 @@ def perturb_limit_cycle(data, u, indices = [-1],  noise = False, noise_str = 1):
     Returns a 2 x T/dt x N matrix of (x,y) points up to time T for perturbed trajectory n
     Step specifies the number of points to skip between simulations
     '''
-    # compute limit cycle
-    lc_x, lc_y, _ = get_limit_cycle(data)
-    
     # for each point in the limit cycle specified by indices,
     N = len(lc_x)
     mu = data.mu
@@ -180,10 +182,11 @@ def perturb_limit_cycle(data, u, indices = [-1],  noise = False, noise_str = 1):
             mu = mu,
             T = T,
             dt = dt,
-            x0 = lc_x[lc_idx],
-            y0 = lc_y[lc_idx]
+            x0 = lc_x[i] + u[0],
+            y0 = lc_y[i] + u[1]
              ).run_sim()
-        pert_trajs[:,:,i] = data.y
+             
+        pert_trajs[:,:,lc_idx] = data.y
         
     return pert_trajs
 
@@ -194,12 +197,12 @@ def perturb_limit_cycle(data, u, indices = [-1],  noise = False, noise_str = 1):
 
 ## Run Simulation & set parameters here
 
-
-def dist_to_limit_cycle(lc_x, lc_y, x, y):
+def dist_to_limit_cycle(lc_x, lc_y, x, y, x_only = False):
     '''
     Compute the distance of (x,y) to the limit cycle (lc_x, lc_y),
     defined here as the minimum distamce of (x,y) to any point on the 
     limit cycle defined by (lc_x,lc_y)
+    If x_only = True, the distance is the absolute value in the x dimension 
     '''
     N = len(lc_x)
     
@@ -209,15 +212,18 @@ def dist_to_limit_cycle(lc_x, lc_y, x, y):
     dxs = lc_x - xs
     dys = lc_y - ys
     
-    d_squareds = np.square(dxs)+ np.square(dys)
-    
-    min_dist = np.min(d_squareds)
-    
-    return np.sqrt(min_dist)
+    if x_only:
+        min_dist = np.min(np.abs(dxs))
+        
+    else:
+        d_squareds = np.square(dxs)+ np.square(dys)
+        min_dist = np.sqrt(np.min(d_squareds))
+        
+    return min_dist
     
 
-mu = 5
-T = 50
+mu = 2
+T = 25
 dt = .0001
 sim = VanderPolSim(mu = mu, T = T, dt = dt)
 data = sim.run_sim()
@@ -331,16 +337,24 @@ if (plot_noisy_start):
     if not plot_limit_cycle:
         lc_x, lc_y, _ = get_limit_cycle(data)
     
-    epsilon = .5  # perturbation strength
+    if not (plot_eigen_decomp):
+        ed = eigen_decomp(data)
+    
+    epsilon = .1 # perturbation strength
     u = epsilon * np.asarray([1, 0])
-    pts = perturb_limit_cycle(data, u)
+    
+    #find index of point on limit cycle with maximum eigenvalue(neg)
+
+    max_idx = np.argmax(ed["l_neg"])
+    
+    pts = perturb_limit_cycle(data, lc_x, lc_y,  u, indices = [max_idx])
     mins = np.zeros((pts.shape[1],))
     plt.figure()    
     for i in np.arange(pts.shape[2]):
         plt.plot(pts[0,:,i],pts[1,:,i])
 
         for j in np.arange(pts.shape[1]):
-            mins[j] = dist_to_limit_cycle(lc_x, lc_y, pts[0,j,i], pts[1,j,i])
+            mins[j] = dist_to_limit_cycle(lc_x, lc_y, pts[0,j,i], pts[1,j,i], x_only = False)
                  
     plt.plot(lc_x,lc_y,c='red')
     
@@ -368,7 +382,29 @@ def converged(lc_x, lc_y, x, y, delta):
         return True
     else:
         return False
-         
+       
+def time_to_convergence(sim_data, delta, init_loc):
+    
+    '''
+    Given a simulation along a limit cycle, a distance delta,
+    and an initial point (x,y), determine the elapsed time before
+    the trajectory starting at (x,y) reaches within delta distance of
+    the limit cycle
+    '''
+    Ts = np.asarray([1, 10, 10**2, 10**4])
+    
+    lc_x, lc_y, lc_t = get_limit_cycle(data)
+    for T in Ts:
+        # simulate for T
+        new_sim = VanderPolSim(x0 = init_loc[0], y0 = init_loc[1], T = T)
+        # find first o
+        
+    print(
+        "location ",
+          init_loc,
+          "does not converge to limit cycle within %i time units." % Ts[-1]
+          )
+    
 
 def get_latent_phase(lc_x, lc_y, lc_t, x, y):
     ''' 
@@ -392,7 +428,8 @@ def get_latent_phase(lc_x, lc_y, lc_t, x, y):
     plt.show()
     #while not converged(sim state, limit cycle)
         # compute next sim step & update
-        
+    
+    # find phase    
      
     # once converged, note time and location.
     
