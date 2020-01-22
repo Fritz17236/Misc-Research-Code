@@ -353,8 +353,8 @@ if (plot_noisy_start):
     for i in np.arange(pts.shape[2]):
         plt.plot(pts[0,:,i],pts[1,:,i])
 
-        for j in np.arange(pts.shape[1]):
-            mins[j] = dist_to_limit_cycle(lc_x, lc_y, pts[0,j,i], pts[1,j,i], x_only = False)
+#         for j in np.arange(pts.shape[1]):
+#             mins[j] = dist_to_limit_cycle(lc_x, lc_y, pts[0,j,i], pts[1,j,i], x_only = False)
                  
     plt.plot(lc_x,lc_y,c='red')
     
