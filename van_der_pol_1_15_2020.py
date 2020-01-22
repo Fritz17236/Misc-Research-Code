@@ -224,7 +224,7 @@ def dist_to_limit_cycle(lc_x, lc_y, x, y, x_only = False):
 
 mu = 2
 T = 25
-dt = .0001
+dt = .001
 sim = VanderPolSim(mu = mu, T = T, dt = dt)
 data = sim.run_sim()
 ts = data.t
@@ -346,15 +346,17 @@ if (plot_noisy_start):
     #find index of point on limit cycle with maximum eigenvalue(neg)
 
     max_idx = np.argmax(ed["l_neg"])
-    
-    pts = perturb_limit_cycle(data, lc_x, lc_y,  u, indices = [max_idx])
-    mins = np.zeros((pts.shape[1],))
+    min_idx = np.argmin(ed["l_neg"])
+    idxs = np.linspace(0,len(lc_x)-1,num = 25,dtype = int)
+    #idxs = [max_idx, min_idx] 
+    pts = perturb_limit_cycle(data, lc_x, lc_y,  u, indices = idxs)
+    mins = np.zeros((pts.shape[1],pts.shape[2]))
     plt.figure()    
     for i in np.arange(pts.shape[2]):
         plt.plot(pts[0,:,i],pts[1,:,i])
 
-#         for j in np.arange(pts.shape[1]):
-#             mins[j] = dist_to_limit_cycle(lc_x, lc_y, pts[0,j,i], pts[1,j,i], x_only = False)
+        for j in np.arange(pts.shape[1]):
+            mins[j,i] = dist_to_limit_cycle(lc_x, lc_y, pts[0,j,i], pts[1,j,i], x_only = False)
                  
     plt.plot(lc_x,lc_y,c='red')
     
