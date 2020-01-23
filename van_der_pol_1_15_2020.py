@@ -315,9 +315,9 @@ def lc_to_phase(lc_x, lc_y, lc_t, rads = True):
 
 
         
-        
-mu = 2
-T = 25
+################Simulation Parameters        
+mu = 4
+T = 50
 dt = .001
 sim = VanderPolSim(mu = mu, T = T, dt = dt)
 data = sim.run_sim()
@@ -326,27 +326,39 @@ xs = data.y[0,:]
 ys = data.y[1,:]
 
     
-epsilon = .1 # perturbation strength
-u = epsilon * np.asarray([1, 0])
+epsilon = .5 # perturbation strength
+u =  epsilon * np.asarray([1, 0])
 delta = .01  # threshold for convergence (converged if dist <= delta)
+################
 
 
-## Data Analysis & Plotting
-# Configure by setting boolean values 
-plot_trajectory = False    # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation
+
+################### Data Analysis & Plotting Configuration 
+plot_trajectory = False    # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation including nullclines
 plot_limit_cycle = False  # Assuming at least 2 full periods of oscillation, compute & plot the limit cycle trajectory
 plot_eigen_decomp = False # Compute the eigenvalues/eigenvectors along the limit cycle & display them
-plot_perturbation_analysis = False # comment here 
-plot_noisy_start = False # comment here
-plot_convergence_analysis = True # comment here
+plot_perturbation_analysis = False # perturb along an eigenvector & compute its linearized growth for each point on the limit cycle
+plot_traj_perturbations = False # numerically simulate a given perturbation along given points of a limit cycle
+plot_convergence_analysis = False# simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase
+ttc_vs_phase_vs_mu = True # similar to plot convergence analysis, except do so for various values of mu
+
+print("Running Simulation")
 
 if (plot_trajectory):    
-    
+    print('Plotting trajectory ... ')
     plt.figure()
-    plt.scatter(xs, ys)
+    plt.plot(xs, ys, label='Oscillator Trajectory')
     plt.xlabel("x")
     plt.ylabel("y")
     plt.title("Phase Space mu = %.2f" %mu)
+     
+    #plot nullclines
+    x_nullcline = np.linspace(-2*np.max(np.abs(xs)), 2*np.max(np.abs(xs)))
+    y_nullcline = [  x / (mu * (1 - x**2))  for x in x_nullcline]
+    plt.plot(x_nullcline, y_nullcline, '--',color='black', label = 'Y nullcline') 
+    plt.axhline(y = 0, label= 'X-nullcline', color='green')
+    plt.legend()
+    #
     
     
     plt.figure()
@@ -360,8 +372,10 @@ if (plot_trajectory):
     plt.xlabel("t")
     plt.ylabel("y")
     plt.title("y trace")
-        
+    
 if (plot_limit_cycle):
+    print('Plotting limit cycle ... ')
+
     lc_x, lc_y, lc_t, idxs = get_limit_cycle(data, indies = True) # get exactly 1 limit cycle
     plt.figure()
     plt.xlabel("x")
@@ -371,6 +385,7 @@ if (plot_limit_cycle):
     plt.title("Limit Cycle Phase Portrait")
     
 if (plot_eigen_decomp):
+    print('Plotting eigendecomposition...')
 
     ed = eigen_decomp(data)
      
@@ -398,7 +413,7 @@ if (plot_eigen_decomp):
     plt.colorbar()
     
 if (plot_perturbation_analysis):
-    delta = .1  # Perturbation Strength
+    print('Plotting perturbation analysis...')
     
     # Project a horizontal perturbation x onto the eigvecs scaled by eigvals & quiver plot 
     pert_x = delta * np.asarray([1, 0])
@@ -419,7 +434,7 @@ if (plot_perturbation_analysis):
          ) 
     
     plt.figure()
-    plt.quiver(xs, ys, net_x[0,:], net_x[1,:], np.log(np.linalg.norm(net_x,axis=0)/delta), scale = 1, headwidth = 6)
+    plt.quiver(xs, ys, net_x[0,:], net_x[1,:], np.log(np.linalg.norm(net_x,axis=0)/epsilon), scale = 1, headwidth = 6)
     plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
     plt.title("X - Perturbation Net Direction & Strength")
     cbar = plt.colorbar()
@@ -427,14 +442,14 @@ if (plot_perturbation_analysis):
     
     
     plt.figure()
-    plt.quiver(xs, ys, net_y[0,:], net_y[1,:], np.log(np.linalg.norm(net_y,axis=0)/delta), scale = 1, headwidth = 6)
+    plt.quiver(xs, ys, net_y[0,:], net_y[1,:], np.log(np.linalg.norm(net_y,axis=0)/epsilon), scale = 1, headwidth = 6)
     plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
     plt.title("Y - Perturbation Net Direction & Strength")
     cbar = plt.colorbar()
     cbar.set_label("$log(||A\delta|| / ||\delta||)$")
     
-if (plot_noisy_start):
-    
+if (plot_traj_perturbations):
+    print('Plotting perturbation trajectories...')
     if not plot_limit_cycle:
         lc_x, lc_y, _ = get_limit_cycle(data)
     
@@ -445,32 +460,32 @@ if (plot_noisy_start):
 
     max_idx = np.argmax(ed["l_neg"])
     min_idx = np.argmin(ed["l_neg"])
-    idxs = np.linspace(0,len(lc_x)-1,num = 25,dtype = int)
-    #idxs = [max_idx, min_idx] 
+    idxs = np.linspace(0,len(lc_x)-1,num = 100,dtype = int)
+    #idxs = [max_idx, min_idx]
+    #idxs = [-4] 
     pts = perturb_limit_cycle(data, lc_x, lc_y,  u, indices = idxs)
     mins = np.zeros((pts.shape[1],pts.shape[2]))
     plt.figure()    
-    for i in np.arange(pts.shape[2]):
+    for i in np.arange(len(idxs)):
+        print('%i/%i'%(i+1,len(idxs)))
         plt.plot(pts[0,:,i],pts[1,:,i])
 
-        for j in np.arange(pts.shape[1]):
-            mins[j,i] = dist_to_limit_cycle(lc_x, lc_y, pts[0,j,i], pts[1,j,i], x_only = False)
-                 
-    plt.plot(lc_x,lc_y,c='red')
-    
-    plt.figure()
-    plt.plot(ts,mins)
-        
+    plt.plot(lc_x,lc_y,c='red')           
+
 if (plot_convergence_analysis):
-    # plot time to convergence for several points such as in noisy start
+    print("Plotting convergence analysis...")
     if not plot_limit_cycle:
         lc_x, lc_y, lc_t = get_limit_cycle(data)
     
-    idxs = np.linspace(0,len(lc_x)-1,num = 50, dtype = int)
+    
+    if not plot_eigen_decomp:
+        ed = eigen_decomp(data)
+        
+
+    # provide indices here
+    
+    idxs = np.linspace(0,len(lc_x)-1,num = 100, dtype = int) 
     phases = np.asarray([*lc_time_to_phase(lc_t)])[idxs]
-    
-    
-    
     
     pert_starts = [
         (
@@ -479,11 +494,19 @@ if (plot_convergence_analysis):
         )
          for i in np.arange(len(idxs))
     ]
+    
     traj_dists = []
     traj_xs = []
     traj_ys = []
     ttcs = []
-    for init_loc in pert_starts:
+    plt.figure()
+    plt.xlabel("Time")
+    plt.ylabel("Distance")
+    plt.axhline(y = delta)
+
+    num_pts = len(idxs)
+    for  idx, init_loc in enumerate(pert_starts):
+        print('%i/%i...'%(idx+1,num_pts))
         # simulate trajectory
         traj = VanderPolSim(T = data.T, dt = data.dt, mu = data.mu,
                              x0 = init_loc[0],
@@ -495,50 +518,79 @@ if (plot_convergence_analysis):
         traj_ys.append(traj_y)
         ttcs.append(time_to_convergence(lc_x, lc_y, traj_x, traj_y, traj.t, delta))
         traj_dists.append(get_traj_dist_from_lc(lc_x, lc_y, traj_x, traj_y))
-    
+        
+        # plot dist to limit cycle, ttc as vert line, delta as horz line
+        plt.plot(data.t, traj_dists[-1])
+        plt.axvline(x = ttcs[-1])
+        
     
     fig, ax1 = plt.subplots()
     ax2 = ax1.twinx() 
     ax1.scatter(phases, ttcs / lc_period(lc_t))
     ax1.set_ylabel('Time to convergence (distance <= %.3f) / period T' %delta)
 
-    if not plot_eigen_decomp:
-        ed = eigen_decomp(data)
-        
-
     ax2.plot(phases, ed['l_neg'][idxs])
+    ax2.plot(phases, ed['l_pos'][idxs])
     ax2.set_ylabel('$\lambda$')
     plt.xlabel('Starting index along limit cycle')
 
-    # plot dist to limit cycle, ttc as vert line, delta as horz line
-    plt.figure()
-    idx = 5
-    plt.plot(data.t, traj_dists[idx])
-    plt.axvline(x = ttcs[idx])
-    plt.axhline(y = delta)
-    plt.xlabel("Time")
-    plt.ylabel("Distance")
-    plt.title("Distance between trajectory %i and nearest point on limit cycle"%idx)
+if (ttc_vs_phase_vs_mu):
+    print('Beginning convergence vs phase mu sweep...')
+    mus = np.asarray([.5, .9, .99, 1.1, 1.5])
+    fig, ax1 = plt.subplots()
+    ax2 = ax1.twinx()
 
-lc_x, lc_y, lc_t = get_limit_cycle(data)
-phase_dict = lc_to_phase(lc_x, lc_y, lc_t)
+    for mu in mus:
+        sim = VanderPolSim(mu = mu)
+        data = sim.run_sim()
+        ts = data.t
+        xs = data.y[0,:]
+        ys = data.y[1,:]
+        
+        lc_x, lc_y, lc_t = get_limit_cycle(data)
+        idxs = np.linspace(0,len(lc_x)-1,num = 100, dtype = int) 
+        phases = np.asarray([*lc_time_to_phase(lc_t)])[idxs]
+        
+        pert_starts = [
+            (
+                lc_x[idxs[i]] + u[0],
+                lc_y[idxs[i]] + u[1]
+            )
+             for i in np.arange(len(idxs))
+        ]
+        
+        traj_dists = []
+        traj_xs = []
+        traj_ys = []
+        ttcs = []
+    
+        num_pts = len(idxs)
+        
+        for  idx, init_loc in enumerate(pert_starts):
+            print('mu = %.3f, index %i/%i...'%(mu,idx+1,num_pts))
+            # simulate trajectory
+            traj = VanderPolSim(T = data.T, dt = data.dt, mu = data.mu,
+                                 x0 = init_loc[0],
+                                 y0 = init_loc[1]
+                                 ).run_sim()  # copy orig sim but with diff starting point
+            traj_x = traj.y[0,:]
+            traj_y = traj.y[1,:]
+            ttcs.append(time_to_convergence(lc_x, lc_y, traj_x, traj_y, traj.t, delta))
+            
+        
+        ax1.plot(phases, ttcs / lc_period(lc_t) ,'-o',label='$\mu = %.3f$, period = %.3f'%(mu,lc_period(lc_t)))
+      #  ax2.plot([*lc_to_phase(lc_x, lc_y, lc_t).keys()],lc_x)
+    ax1.set_ylabel('Time to convergence (distance <= %.3f) / period T' %delta)
+    plt.xlabel('Starting phase of perturbation limit cycle')
+    ax1.legend()
 
-plt.figure()
-plt.plot(lc_t-lc_t[0], [*phase_dict.keys()])
-print('period :',lc_period(lc_t))
-
+print("Simulation Complete.")
 plt.show()
 
 
 
+
 #Workspace down here
-
-
-
-
-
-       
-
 
 def get_latent_phase(lc_x, lc_y, lc_t, x, y):
     ''' 
