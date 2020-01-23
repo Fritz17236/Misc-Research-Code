@@ -221,7 +221,101 @@ def dist_to_limit_cycle(lc_x, lc_y, x, y, x_only = False):
         
     return min_dist
     
+# simulation parameters
 
+def get_traj_dist_from_lc(lc_x, lc_y, traj_x, traj_y):
+    '''
+    Given a limit cycle (lc_x, lc_y) and a trajectory of points (traj_x, traj_y)
+    compute the distance to the limit cycle for each point (traj_x, traj_y) and 
+    return this distance as a vector
+    '''
+    dists = np.zeros((len(traj_x,)))
+    
+    for i,_ in enumerate(dists):
+        dists[i] = dist_to_limit_cycle(lc_x, lc_y, traj_x[i], traj_y[i])
+        
+    return dists
+
+def time_to_convergence(lc_x, lc_y, traj_x, traj_y, traj_ts, delta):
+    
+    '''
+    Given a limit cycle (lc_x, lc_y) , a distance delta,
+    and trajectory in question of points (x,y,t), determine the elapsed time before
+    the trajectory is within delta distance of
+    the limit cycle
+    '''
+
+    # find first point of convergence
+    for i in np.arange(len(traj_x)):
+        if converged(lc_x, lc_y, traj_x[i], traj_y[i], delta):
+            return traj_ts[i]
+    
+        
+    print(
+        "location ",
+          (traj_x[0],traj_x[1]),
+          "does not converge to limit cycle within %i time units." % traj_ts[-1]
+          )
+    return -1
+
+def converged(lc_x, lc_y, x, y, delta):
+    '''
+    Given a limit cycle specified by lc_x, lc_y, a point x,y and some distance delta,
+    check if the distance of the closest point on the limit cycle to (x,y) is within delta.
+    '''
+    if dist_to_limit_cycle(lc_x, lc_y, x, y) <= delta:
+        return True
+    else:
+        return False    
+
+def lc_period(lc_t):
+    ''' 
+    Given a time vector of limit cycle points,
+    return the period of the limit cycle
+    '''
+    return lc_t[-1] - lc_t[0]
+
+def lc_time_to_phase(lc_t, rads = True):
+    ''' Given a limit cycle time, convert to phase '''
+    T = lc_period(lc_t)
+    
+    phases = []
+    if rads:
+        for t in lc_t - lc_t[0]:
+            phases.append(t/T * 2 * np.pi)
+    else:
+        for t in lc_t - lc_t[0]:
+            phases.append(t/T)
+    return phases
+
+def lc_to_phase(lc_x, lc_y, lc_t, rads = True):
+    '''
+    Given a limit cycle (lc_x, lc_y, lc_t)
+    return its phase representation, i.e map
+    each point in the limit cycle (lc_x, lc_y) to the unit
+    circle and return the phase of the point, which is a fraction
+    of the period.
+    If rads is true then return answer in radians
+    '''
+    # each point (lc_x, lc_y) is a value associated with a key phase
+    # given by the fraction of the period passed
+    phase_lc = {}
+    phases = lc_time_to_phase(lc_t)
+    
+    if rads:
+        for i in np.arange((len(lc_x))):
+            phase_lc.update({phases[i] : (lc_x[i], lc_y[i]) })
+    else:
+        for i in np.arange((len(lc_x))):
+            phase_lc.update({phases[i] : (lc_x[i], lc_y[i]) })
+            
+    
+        
+    return phase_lc
+
+
+        
+        
 mu = 2
 T = 25
 dt = .001
@@ -231,13 +325,20 @@ ts = data.t
 xs = data.y[0,:]
 ys = data.y[1,:]
 
+    
+epsilon = .1 # perturbation strength
+u = epsilon * np.asarray([1, 0])
+delta = .01  # threshold for convergence (converged if dist <= delta)
+
+
 ## Data Analysis & Plotting
 # Configure by setting boolean values 
 plot_trajectory = False    # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation
 plot_limit_cycle = False  # Assuming at least 2 full periods of oscillation, compute & plot the limit cycle trajectory
 plot_eigen_decomp = False # Compute the eigenvalues/eigenvectors along the limit cycle & display them
 plot_perturbation_analysis = False # comment here 
-plot_noisy_start = True  # comment here
+plot_noisy_start = False # comment here
+plot_convergence_analysis = True # comment here
 
 if (plot_trajectory):    
     
@@ -339,10 +440,7 @@ if (plot_noisy_start):
     
     if not (plot_eigen_decomp):
         ed = eigen_decomp(data)
-    
-    epsilon = .1 # perturbation strength
-    u = epsilon * np.asarray([1, 0])
-    
+
     #find index of point on limit cycle with maximum eigenvalue(neg)
 
     max_idx = np.argmax(ed["l_neg"])
@@ -363,9 +461,72 @@ if (plot_noisy_start):
     plt.figure()
     plt.plot(ts,mins)
         
-
-
+if (plot_convergence_analysis):
+    # plot time to convergence for several points such as in noisy start
+    if not plot_limit_cycle:
+        lc_x, lc_y, lc_t = get_limit_cycle(data)
     
+    idxs = np.linspace(0,len(lc_x)-1,num = 50, dtype = int)
+    phases = np.asarray([*lc_time_to_phase(lc_t)])[idxs]
+    
+    
+    
+    
+    pert_starts = [
+        (
+            lc_x[idxs[i]] + u[0],
+            lc_y[idxs[i]] + u[1]
+        )
+         for i in np.arange(len(idxs))
+    ]
+    traj_dists = []
+    traj_xs = []
+    traj_ys = []
+    ttcs = []
+    for init_loc in pert_starts:
+        # simulate trajectory
+        traj = VanderPolSim(T = data.T, dt = data.dt, mu = data.mu,
+                             x0 = init_loc[0],
+                             y0 = init_loc[1]
+                             ).run_sim()  # copy orig sim but with diff starting point
+        traj_x = traj.y[0,:]
+        traj_y = traj.y[1,:]
+        traj_xs.append(traj_x)
+        traj_ys.append(traj_y)
+        ttcs.append(time_to_convergence(lc_x, lc_y, traj_x, traj_y, traj.t, delta))
+        traj_dists.append(get_traj_dist_from_lc(lc_x, lc_y, traj_x, traj_y))
+    
+    
+    fig, ax1 = plt.subplots()
+    ax2 = ax1.twinx() 
+    ax1.scatter(phases, ttcs / lc_period(lc_t))
+    ax1.set_ylabel('Time to convergence (distance <= %.3f) / period T' %delta)
+
+    if not plot_eigen_decomp:
+        ed = eigen_decomp(data)
+        
+
+    ax2.plot(phases, ed['l_neg'][idxs])
+    ax2.set_ylabel('$\lambda$')
+    plt.xlabel('Starting index along limit cycle')
+
+    # plot dist to limit cycle, ttc as vert line, delta as horz line
+    plt.figure()
+    idx = 5
+    plt.plot(data.t, traj_dists[idx])
+    plt.axvline(x = ttcs[idx])
+    plt.axhline(y = delta)
+    plt.xlabel("Time")
+    plt.ylabel("Distance")
+    plt.title("Distance between trajectory %i and nearest point on limit cycle"%idx)
+
+lc_x, lc_y, lc_t = get_limit_cycle(data)
+phase_dict = lc_to_phase(lc_x, lc_y, lc_t)
+
+plt.figure()
+plt.plot(lc_t-lc_t[0], [*phase_dict.keys()])
+print('period :',lc_period(lc_t))
+
 plt.show()
 
 
@@ -375,38 +536,9 @@ plt.show()
 
 
 
-def converged(lc_x, lc_y, x, y, delta):
-    '''
-    Given a limit cycle specified by lc_x, lc_y, a point x,y and some distance delta,
-    check if the distance of the closest point on the limit cycle to (x,y) is within delta.
-    '''
-    if dist_to_limit_cycle(lc_x, lc_y, x, y) <= delta:
-        return True
-    else:
-        return False
+
        
-def time_to_convergence(sim_data, delta, init_loc):
-    
-    '''
-    Given a simulation along a limit cycle, a distance delta,
-    and an initial point (x,y), determine the elapsed time before
-    the trajectory starting at (x,y) reaches within delta distance of
-    the limit cycle
-    '''
-    Ts = np.asarray([1, 10, 10**2, 10**4])
-    
-    lc_x, lc_y, lc_t = get_limit_cycle(data)
-    for T in Ts:
-        # simulate for T
-        new_sim = VanderPolSim(x0 = init_loc[0], y0 = init_loc[1], T = T)
-        # find first o
-        
-    print(
-        "location ",
-          init_loc,
-          "does not converge to limit cycle within %i time units." % Ts[-1]
-          )
-    
+
 
 def get_latent_phase(lc_x, lc_y, lc_t, x, y):
     ''' 
