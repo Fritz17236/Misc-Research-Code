@@ -3,9 +3,9 @@
 # Chris Fritz 1/15/2020
 
 #TODO: 
-# Plot nullclines
-# Modify perturb_limit_cycle to only iterate ver provided indices
-# Compute Latent Phase
+# make sure latent pahse is correct: simulate trajectories and make sure they match at ttc
+# compute latent phase, replace a trajectory with its latent phase, then simulate the original trajectory to determine approx error
+
 
 ##import statements
 import numpy as np
@@ -157,10 +157,9 @@ def eigen_decomp(data, limit_cycle = True):
 def perturb_limit_cycle(data, lc_x, lc_y, u, indices = [-1],  noise = False, noise_str = 1):
     '''
     Given data 
-    and a perturbation vector u, compute the limit cycle, apply perturbation u to every
-    point on the limit cycle, and simulate the trajectory of each point.
+    and a perturbation vector u, compute the limit cycle, apply perturbation u to indices points
+    on the limit cycle, and simulate the trajectory of each point.
     Returns a 2 x T/dt x N matrix of (x,y) points up to time T for perturbed trajectory n
-    Step specifies the number of points to skip between simulations
     '''
     # for each point in the limit cycle specified by indices,
     N = len(lc_x)
@@ -197,29 +196,32 @@ def perturb_limit_cycle(data, lc_x, lc_y, u, indices = [-1],  noise = False, noi
 
 ## Run Simulation & set parameters here
 
-def dist_to_limit_cycle(lc_x, lc_y, x, y, x_only = False):
+def nearest_lc_point(lc_x, lc_y, x, y):
     '''
-    Compute the distance of (x,y) to the limit cycle (lc_x, lc_y),
-    defined here as the minimum distamce of (x,y) to any point on the 
-    limit cycle defined by (lc_x,lc_y)
-    If x_only = True, the distance is the absolute value in the x dimension 
+    Find the closest point on a given limit cycle to the point (x,y).
     '''
-    N = len(lc_x)
-    
-    xs = np.ones((N,)) * x
-    ys = np.ones((N,)) * y
+    xs = np.ones(lc_y.shape) * x
+    ys = np.ones(lc_x.shape) * y
     
     dxs = lc_x - xs
     dys = lc_y - ys
     
-    if x_only:
-        min_dist = np.min(np.abs(dxs))
-        
-    else:
-        d_squareds = np.square(dxs)+ np.square(dys)
-        min_dist = np.sqrt(np.min(d_squareds))
-        
-    return min_dist
+    dists = np.sqrt(np.square(dxs) + np.square(dys))
+    
+    mindex = np.argmin(dists)
+    return (lc_x[mindex], lc_y[mindex], mindex)
+    
+def dist_to_limit_cycle(lc_x, lc_y, x, y):
+    '''
+    Compute the distance of (x,y) to the limit cycle (lc_x, lc_y),
+    defined here as the minimum distamce of (x,y) to any point on the 
+    limit cycle defined by (lc_x,lc_y)
+    '''
+    
+    close_lc_pt = nearest_lc_point(lc_x, lc_y, x, y)
+    
+    return ((close_lc_pt[0]-x)**2 + (close_lc_pt[1] - y)**2)**.5
+    
     
 # simulation parameters
 
@@ -256,7 +258,7 @@ def time_to_convergence(lc_x, lc_y, traj_x, traj_y, traj_ts, delta):
           (traj_x[0],traj_x[1]),
           "does not converge to limit cycle within %i time units." % traj_ts[-1]
           )
-    return -1
+    return NaN
 
 def converged(lc_x, lc_y, x, y, delta):
     '''
@@ -275,7 +277,7 @@ def lc_period(lc_t):
     '''
     return lc_t[-1] - lc_t[0]
 
-def lc_time_to_phase(lc_t, rads = True):
+def lc_time_to_phase(lc_t, rads = False):
     ''' Given a limit cycle time, convert to phase '''
     T = lc_period(lc_t)
     
@@ -288,7 +290,7 @@ def lc_time_to_phase(lc_t, rads = True):
             phases.append(t/T)
     return phases
 
-def lc_to_phase(lc_x, lc_y, lc_t, rads = True):
+def lc_to_phase(lc_x, lc_y, lc_t, rads = False):
     '''
     Given a limit cycle (lc_x, lc_y, lc_t)
     return its phase representation, i.e map
@@ -300,22 +302,81 @@ def lc_to_phase(lc_x, lc_y, lc_t, rads = True):
     # each point (lc_x, lc_y) is a value associated with a key phase
     # given by the fraction of the period passed
     phase_lc = {}
-    phases = lc_time_to_phase(lc_t)
-    
     if rads:
-        for i in np.arange((len(lc_x))):
-            phase_lc.update({phases[i] : (lc_x[i], lc_y[i]) })
-    else:
-        for i in np.arange((len(lc_x))):
-            phase_lc.update({phases[i] : (lc_x[i], lc_y[i]) })
-            
+        phases = lc_time_to_phase(lc_t, rads = True)
+    else: 
+        phases = lc_time_to_phase(lc_t, rads = False)
     
-        
+
+    for i in np.arange((len(lc_x))):
+        phase_lc.update({phases[i] : (lc_x[i], lc_y[i]) })
+    for i in np.arange((len(lc_x))):
+        phase_lc.update({phases[i] : (lc_x[i], lc_y[i]) })
+
     return phase_lc
 
 
         
 ################Simulation Parameters        
+
+def get_latent_phase(data, x, y, rads = False):
+    ''' 
+    Given a point (x,y) in the phase plane,  compute its latent phase.
+    The latent phase is defined as the phase of the limit cycle corresponding 
+    to the intersection of the trajectory starting at (x,y) with the limit cycle
+    at t--> infinity. 
+    Caller must provide data from VanderpolSim. Also returns time to convergence.
+    '''
+
+    
+    ## make sure lc at ttc is same as latent phase after ttc
+    
+    # start simulation at initial condition & run simulation for T
+    sim = VanderPolSim(mu = data.mu, dt = data.dt, T = data.T, x0 = x, y0 = y)
+    data = sim.run_sim()
+    traj_x = data.y[0,:]
+    traj_y = data.y[1,:]
+    traj_ts = data.t
+    
+    lc_x, lc_y, lc_t = get_limit_cycle(data)
+    
+    # get time to convergence, 
+    ttc = time_to_convergence(lc_x, lc_y, traj_x, traj_y, traj_ts, delta)
+    conv_idx = np.argmax(traj_ts == ttc)
+    
+    #get phase of convergence
+    # trajectory state at conv_idx
+    nr_lc_x, nr_lc_y, _ = nearest_lc_point(lc_x, lc_y, traj_x[conv_idx], traj_y[conv_idx])
+
+
+    
+    #phase associated with the trajectories state at ttc
+    phases = lc_to_phase(lc_x, lc_y, lc_t)
+    phase_list = [*phases.keys()]
+    # find phase associated with nr_lc_pt (search dict by value)
+    conv_phase = -1
+    for ph in phase_list:
+        if phases[ph] == (nr_lc_x, nr_lc_y):
+            conv_phase = ph
+            
+    if conv_phase == -1:
+        print("Could not compute convergence phase")
+        return NaN
+    
+    #wt + phi_lat = phase of convergence
+    if rads:
+        phi_lat = conv_phase - (2 * np.pi * ttc / lc_period(lc_t))
+        
+    else:
+        phi_lat = conv_phase - (ttc / lc_period(lc_t))
+
+        
+    
+    closest_idx = np.argmin(np.abs(phase_list- phi_lat))
+    
+
+    return phase_list[closest_idx], ttc 
+
 mu = 4
 T = 50
 dt = .001
@@ -336,11 +397,11 @@ delta = .01  # threshold for convergence (converged if dist <= delta)
 ################### Data Analysis & Plotting Configuration 
 plot_trajectory = False    # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation including nullclines
 plot_limit_cycle = False  # Assuming at least 2 full periods of oscillation, compute & plot the limit cycle trajectory
-plot_eigen_decomp = False # Compute the eigenvalues/eigenvectors along the limit cycle & display them
+plot_eigen_decomp = True # Compute the eigenvalues/eigenvectors along the limit cycle & display them
 plot_perturbation_analysis = False # perturb along an eigenvector & compute its linearized growth for each point on the limit cycle
 plot_traj_perturbations = False # numerically simulate a given perturbation along given points of a limit cycle
 plot_convergence_analysis = False# simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase
-ttc_vs_phase_vs_mu = True # similar to plot convergence analysis, except do so for various values of mu
+ttc_vs_phase_vs_mu = False# similar to plot convergence analysis, except do so for various values of mu
 
 print("Running Simulation")
 
@@ -386,28 +447,28 @@ if (plot_limit_cycle):
     
 if (plot_eigen_decomp):
     print('Plotting eigendecomposition...')
+    
+    if not (plot_limit_cycle):
+        lc_x, lc_y, lc_t = get_limit_cycle(data)
 
     ed = eigen_decomp(data)
      
     plt.figure()
-    plt.plot(ts, ed["l_neg"],label= '$\lambda_{-}$')
-    plt.plot(ts, ed["l_pos"],label= '$\lambda_{+}$')
-    plt.xlabel('t')
+    plt.plot((lc_t-lc_t[0]) / lc_period(lc_t), ed["l_neg"],label= '$\lambda_{-}$')
+    plt.plot((lc_t-lc_t[0]) / lc_period(lc_t), ed["l_pos"],label= '$\lambda_{+}$')
+    plt.xlabel('fraction of period time')
     plt.ylabel('$Re (\lambda) $')
     plt.legend()
     
     plt.figure()
     
-    if not (plot_limit_cycle):
-        lc_x, lc_y, lc_t, idxs = get_limit_cycle(data, indices=True)
-    
-    plt.quiver(lc_x, lc_y, ed["evec_neg"][0,idxs], ed["evec_neg"][1,idxs], ed["l_neg"][idxs], scale = 8, headwidth = 6)
+    plt.quiver(lc_x, lc_y, ed["evec_neg"][0,:], ed["evec_neg"][1,:], ed["l_neg"], scale = 8, headwidth = 6)
     plt.title("Linear Stability (Negative Root Eigenvalue")
     plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
     plt.colorbar()
     
     plt.figure()
-    plt.quiver(lc_x, lc_y, ed["evec_pos"][0,idxs], ed["evec_pos"][1,idxs], ed["l_pos"][idxs], scale = 8, headwidth = 6)
+    plt.quiver(lc_x, lc_y, ed["evec_pos"][0], ed["evec_pos"][1], ed["l_pos"], scale = 8, headwidth = 6)
     plt.plot(lc_x, lc_y,label='mu = %.1f' % mu, alpha = .4,c = 'red')
     plt.title("Linear Stability (Positive Root Eigenvalue")
     plt.colorbar()
@@ -536,7 +597,8 @@ if (plot_convergence_analysis):
 
 if (ttc_vs_phase_vs_mu):
     print('Beginning convergence vs phase mu sweep...')
-    mus = np.asarray([.5, .9, .99, 1.1, 1.5])
+    mus = np.asarray([4])
+    num_pts = 10000
     fig, ax1 = plt.subplots()
     ax2 = ax1.twinx()
 
@@ -548,7 +610,7 @@ if (ttc_vs_phase_vs_mu):
         ys = data.y[1,:]
         
         lc_x, lc_y, lc_t = get_limit_cycle(data)
-        idxs = np.linspace(0,len(lc_x)-1,num = 100, dtype = int) 
+        idxs = np.linspace(0,len(lc_x)-1,num = num_pts, dtype = int) 
         phases = np.asarray([*lc_time_to_phase(lc_t)])[idxs]
         
         pert_starts = [
@@ -584,6 +646,9 @@ if (ttc_vs_phase_vs_mu):
     plt.xlabel('Starting phase of perturbation limit cycle')
     ax1.legend()
 
+
+
+
 print("Simulation Complete.")
 plt.show()
 
@@ -592,42 +657,41 @@ plt.show()
 
 #Workspace down here
 
-def get_latent_phase(lc_x, lc_y, lc_t, x, y):
-    ''' 
-    Given a point (x,y) in the phase plane,  compute its latent phase.
-    The latent phase is defined as the phase of the limit cycle corresponding 
-    to the intersection of the trajectory starting at (x,y) with the limit cycle
-    at t--> infinity. 
-    Caller must provide 3 vectors of x and y coords of limit cycle lc_x, lc_y,
-    and lc_t times for each point.
-    '''
-    
-    # start simulation at initial condition & run simulation for T
-    sim = VanderPolSim(x0 = x, y0 = y)
-    data = sim.run_sim()
-    x_traj = data.y[0,:]
-    y_traj = data.y[1,:]
-    
-    conv_idx = -1
-    plt.figure()
-    plt.plot(x_traj,y_traj)
-    plt.show()
-    #while not converged(sim state, limit cycle)
-        # compute next sim step & update
-    
-    # find phase    
-     
-    # once converged, note time and location.
-    
-    # given time and point x,y of intersection, compute the  
-    
+# lc_x, lc_y, lc_t = get_limit_cycle(data)
+# idxs = np.linspace(0, len(lc_x)-1, num = 20, dtype=int)
+# 
+# phases = lc_to_phase(lc_x, lc_y, lc_t)
+# 
+# # get latent phase for each point around limit cycle
+# lat_phases = []
+# ttcs = []
+# 
+# for i in idxs:
+#     lp, ttc = get_latent_phase(data, lc_x[i] + u[0], lc_y[i] + u[1])
+#          
+#     
+#     lat_phases.append(lp)
+#     ttcs.append(ttc)
+#     
+# 
+# # given latent phases, run a simulation at a latent phase and compare it to its actual trajectory
+# for i in np.arange(len(ttcs)):
+#     print(lat_phases[i], ttcs[i])
+# 
+# # plot the limit cycle and trajectory starting at the last perturbed point
+# plt.plot(lc_x, lc_y)
+# pts = perturb_limit_cycle(data, lc_x, lc_y, u, [idxs[-1]])
+# 
+# # how close to trajectory
+# dists = []
+# num_pts = ttc / dt
+# 
+# for i in np.arange(num_pts):
+#     #dists.append(dist_to_limit_cycle(lc_x, lc_y, pts[0,i], pts[1,i]))
+#     dists.append(data.dt * i)
+# plt.scatter(pts[0,0:num_pts,0],pts[1,0:num_pts,0], c = dists, alpha = .9)
+# plt.colorbar()
 
-# run simulation to determine when min(||state traj(x,y) - limit_cycle(a,b, t)||) < delta 
-# given this time, compute the latent phase:
-    # theta( w * t + phi_lat ) =theta( limit_cycle(a,b, t) )
-    
-      
-#get_latent_phase(lc_x, lc_y, lc_t, 3, 0)
 
 
 
