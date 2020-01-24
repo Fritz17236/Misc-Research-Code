@@ -3,9 +3,10 @@
 # Chris Fritz 1/15/2020
 
 #TODO: 
+# binary search or time to convergence (done mention in commit)
+# compute angle b/t eigenvector and limit cycle, use to scale eval (no results)
 # make sure latent pahse is correct: simulate trajectories and make sure they match at ttc
 # compute latent phase, replace a trajectory with its latent phase, then simulate the original trajectory to determine approx error
-
 
 ##import statements
 import numpy as np
@@ -13,6 +14,7 @@ import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from scipy.signal import argrelextrema
 import cmath
+from numpy import iscomplex
 
 ## Class Definitions
 class VanderPolSim:
@@ -113,15 +115,23 @@ def evec_neg(x, y, mu):
         ])
     return vec / np.linalg.norm(vec)
 
+def evec_ang(lc_inst_x, lc_inst_y, evec_x, evec_y):
+    '''
+    given a vector parrallel to the limit cycle, compute the angle
+    between that vector and the provided eigenvector evec
+    '''
+    lc = np.asarray([lc_inst_x, lc_inst_y])
+    evec = np.asarray([evec_x, evec_y])
+    return np.arccos(lc.T@evec)
+
 def eigen_decomp(data, limit_cycle = True):
     ''' 
     Given simulation data, return the eigendecomposition of the 
     linearization at each point around the limit cycle.
     Returns data as dictionary with the following entries:
     eig["l_neg"] negative root eigenvalues at each of the N data points
-    eig["l_pos"] positive root eigenvalues
     eig["evec_neg"] eigenvector associated with l_neg
-    eig["evec_pos"] eigenvector associated with l_pos
+    eig["angs_neg"] is the angle of the eigenvector relative to the limit cycle trajectory
     If limit_cycle is true, only return the eigenvalue along a computed limit
     cycle as opposed to the entire trajectory of data
     '''
@@ -138,19 +148,35 @@ def eigen_decomp(data, limit_cycle = True):
     l_poss = np.zeros((N,1))
     evec_negs = np.zeros((2,N))
     evec_poss = np.zeros((2,N))
-    
+    evec_pos_angs = np.zeros(l_negs.shape)
+    evec_neg_angs = np.zeros(l_negs.shape)
     for i in np.arange(N):
         l_negs[i] = l_neg(xs[i], ys[i], mu)
         l_poss[i] = l_pos(xs[i], ys[i], mu)
         
         evec_negs[:,i] = evec_neg(xs[i], ys[i], mu)
         evec_poss[:,i] = evec_pos(xs[i], ys[i], mu)
+        
+        lc_inst_x = lc_x[i]-lc_x[i-3]
+        lc_inst_y = lc_y[i] - lc_y[i-3]
+        
+        evec_pos_angs[i] = evec_ang(
+            lc_inst_x, lc_inst_y,
+            evec_poss[0,i], evec_poss[0,i]
+        )
+        
+        evec_neg_angs[i] = evec_ang(
+            lc_inst_x, lc_inst_y,
+            evec_negs[0,i], evec_negs[0,i])
+        
     
     eig_dec = {
         "l_neg" : l_negs,
         "l_pos" : l_poss,
         "evec_neg" : evec_negs,
-        "evec_pos" : evec_poss
+        "evec_pos" : evec_poss,
+        "angs_neg" : evec_neg_angs,
+        "angs_pos" : evec_pos_angs
         }  
     return eig_dec      
 
@@ -246,19 +272,52 @@ def time_to_convergence(lc_x, lc_y, traj_x, traj_y, traj_ts, delta):
     the trajectory is within delta distance of
     the limit cycle
     '''
-
-    # find first point of convergence
-    for i in np.arange(len(traj_x)):
-        if converged(lc_x, lc_y, traj_x[i], traj_y[i], delta):
-            return traj_ts[i]
-    
+    def bin_search_conv_idx(idxs):
+        '''
+        Recursively implement binary search to find smallest index of convergence
+        in given trajectory
+        '''
         
-    print(
+        if len(idxs) == 0:
+            return -1
+        else:
+            midpoint = int(len(idxs)/2)
+            search_idx = idxs[midpoint]
+            curr_conv = converged(lc_x, lc_y, traj_x[search_idx], traj_y[search_idx], delta)
+            prev_conv = converged(lc_x, lc_y, traj_x[search_idx-1], traj_y[search_idx-1], delta)
+            
+        if curr_conv: # if current converged
+                
+            if not prev_conv: # if previous not converged stop
+                return search_idx
+            
+            else: # otherwise check left half
+                return bin_search_conv_idx(idxs[0:midpoint])
+                    
+        
+        else: #check right half
+            return bin_search_conv_idx(idxs[midpoint:])
+            
+            
+        
+    # find first point of convergence
+    
+    conv_idx = bin_search_conv_idx(np.arange(len(traj_x)))
+
+
+    if conv_idx is  -1: # if binseach fails try linear search (old code)
+        for i in np.arange(len(traj_x)):
+            if converged(lc_x, lc_y, traj_x[i], traj_y[i], delta):
+                return traj_ts[i]
+        print(
         "location ",
-          (traj_x[0],traj_x[1]),
-          "does not converge to limit cycle within %i time units." % traj_ts[-1]
-          )
-    return NaN
+        (traj_x[0],traj_x[1]),
+        "does not converge to limit cycle within %i time units." % traj_ts[-1]
+        )
+        return NaN
+    
+    else:
+        return traj_ts[conv_idx]
 
 def converged(lc_x, lc_y, x, y, delta):
     '''
@@ -377,7 +436,7 @@ def get_latent_phase(data, x, y, rads = False):
 
     return phase_list[closest_idx], ttc 
 
-mu = 4
+mu = 3
 T = 50
 dt = .001
 sim = VanderPolSim(mu = mu, T = T, dt = dt)
@@ -387,9 +446,9 @@ xs = data.y[0,:]
 ys = data.y[1,:]
 
     
-epsilon = .5 # perturbation strength
+epsilon = 1 # perturbation strength
 u =  epsilon * np.asarray([1, 0])
-delta = .01  # threshold for convergence (converged if dist <= delta)
+delta = .05  # threshold for convergence (converged if dist <= delta)
 ################
 
 
@@ -397,11 +456,13 @@ delta = .01  # threshold for convergence (converged if dist <= delta)
 ################### Data Analysis & Plotting Configuration 
 plot_trajectory = False    # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation including nullclines
 plot_limit_cycle = False  # Assuming at least 2 full periods of oscillation, compute & plot the limit cycle trajectory
-plot_eigen_decomp = True # Compute the eigenvalues/eigenvectors along the limit cycle & display them
+plot_eigen_decomp = False# Compute the eigenvalues/eigenvectors along the limit cycle & display them
 plot_perturbation_analysis = False # perturb along an eigenvector & compute its linearized growth for each point on the limit cycle
 plot_traj_perturbations = False # numerically simulate a given perturbation along given points of a limit cycle
+plot_pert_along_evecs = True # Perturb the limit cycle along an eigenvector and plot the convergence results
 plot_convergence_analysis = False# simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase
 ttc_vs_phase_vs_mu = False# similar to plot convergence analysis, except do so for various values of mu
+
 
 print("Running Simulation")
 
@@ -437,7 +498,7 @@ if (plot_trajectory):
 if (plot_limit_cycle):
     print('Plotting limit cycle ... ')
 
-    lc_x, lc_y, lc_t, idxs = get_limit_cycle(data, indies = True) # get exactly 1 limit cycle
+    lc_x, lc_y, lc_t, idxs = get_limit_cycle(data, indices = True) # get exactly 1 limit cycle
     plt.figure()
     plt.xlabel("x")
     plt.ylabel("y")
@@ -533,6 +594,40 @@ if (plot_traj_perturbations):
 
     plt.plot(lc_x,lc_y,c='red')           
 
+if plot_pert_along_evecs:
+    if not plot_limit_cycle:
+        lc_x, lc_y, lc_t = get_limit_cycle(data)
+    
+    if not plot_eigen_decomp:
+        ed = eigen_decomp(data)
+    
+    # given indices, perturb them along an eigenvector and plot the convergence results
+    idxs = np.linspace(0, len(lc_x)-1,num = 800, dtype = int )
+    fig, ax1 = plt.subplots()
+    ttcs = []
+    for j,i in enumerate(idxs):
+        print("%i/%i..."%(j+1,len(idxs)))
+        evec = epsilon * ed["evec_neg"][:,i]
+        pert = (lc_x[i] + evec[0], lc_y[i] + evec[1])
+        # compute a trajectory starting at pert
+        pert_data = VanderPolSim(mu = mu, x0 = pert[0], y0 = pert[1], T = T, dt = dt).run_sim()    
+        pert_traj_x = pert_data.y[0,:]
+        pert_traj_y = pert_data.y[1,:]
+        pert_traj_ts = pert_data.t
+        
+        # compute time to convergence
+        ttcs.append(time_to_convergence(lc_x, lc_y, pert_traj_x, pert_traj_y, pert_traj_ts, delta))
+        
+        
+    ax1.scatter(lc_t[idxs] / lc_period(lc_t),ttcs, label = "time to convergence")
+    
+    ax2 = ax1.twinx()
+
+    ax2.plot(lc_t[idxs]/ lc_period(lc_t), ed["l_neg"][idxs],'--',label='$\lambda_{-}$')    
+    ax2.plot(lc_t[idxs]/ lc_period(lc_t), ed["l_pos"][idxs],'--',label='$\lambda_{+}$')
+    ax2.axhline(y=0)
+    plt.legend()
+
 if (plot_convergence_analysis):
     print("Plotting convergence analysis...")
     if not plot_limit_cycle:
@@ -598,10 +693,12 @@ if (plot_convergence_analysis):
 if (ttc_vs_phase_vs_mu):
     print('Beginning convergence vs phase mu sweep...')
     mus = np.asarray([4])
-    num_pts = 10000
+    num_pts = 100
     fig, ax1 = plt.subplots()
     ax2 = ax1.twinx()
 
+    if not plot_eigen_decomp:
+        ed = eigen_decomp(data)
     for mu in mus:
         sim = VanderPolSim(mu = mu)
         data = sim.run_sim()
@@ -613,10 +710,15 @@ if (ttc_vs_phase_vs_mu):
         idxs = np.linspace(0,len(lc_x)-1,num = num_pts, dtype = int) 
         phases = np.asarray([*lc_time_to_phase(lc_t)])[idxs]
         
+        u = np.zeros((len(idxs, 2)))
+        for i in np.arange(len(idxs)):
+            u[i,0] = ed["evec_pos"][i,0]
+            u[i,1] = ed["evec_pos"][i,1]
+        
         pert_starts = [
             (
-                lc_x[idxs[i]] + u[0],
-                lc_y[idxs[i]] + u[1]
+                lc_x[idxs[i]] + u[i,0],
+                lc_y[idxs[i]] + u[i,1]
             )
              for i in np.arange(len(idxs))
         ]
@@ -645,6 +747,7 @@ if (ttc_vs_phase_vs_mu):
     ax1.set_ylabel('Time to convergence (distance <= %.3f) / period T' %delta)
     plt.xlabel('Starting phase of perturbation limit cycle')
     ax1.legend()
+
 
 
 
