@@ -3,8 +3,6 @@
 # Chris Fritz 1/15/2020
 
 #TODO: 
-# binary search or time to convergence (done mention in commit)
-# compute angle b/t eigenvector and limit cycle, use to scale eval (no results)
 # make sure latent pahse is correct: simulate trajectories and make sure they match at ttc
 # compute latent phase, replace a trajectory with its latent phase, then simulate the original trajectory to determine approx error
 
@@ -392,10 +390,10 @@ def get_latent_phase(data, x, y, rads = False):
     
     # start simulation at initial condition & run simulation for T
     sim = VanderPolSim(mu = data.mu, dt = data.dt, T = data.T, x0 = x, y0 = y)
-    data = sim.run_sim()
-    traj_x = data.y[0,:]
-    traj_y = data.y[1,:]
-    traj_ts = data.t
+    sim_data = sim.run_sim()
+    traj_x = sim_data.y[0,:]
+    traj_y = sim_data.y[1,:]
+    traj_ts = sim_data.t
     
     lc_x, lc_y, lc_t = get_limit_cycle(data)
     
@@ -406,9 +404,7 @@ def get_latent_phase(data, x, y, rads = False):
     #get phase of convergence
     # trajectory state at conv_idx
     nr_lc_x, nr_lc_y, _ = nearest_lc_point(lc_x, lc_y, traj_x[conv_idx], traj_y[conv_idx])
-
-
-    
+ 
     #phase associated with the trajectories state at ttc
     phases = lc_to_phase(lc_x, lc_y, lc_t)
     phase_list = [*phases.keys()]
@@ -436,6 +432,34 @@ def get_latent_phase(data, x, y, rads = False):
 
     return phase_list[closest_idx], ttc 
 
+def latent_error_traj(data, x, y):
+    ''' 
+    Given a simulation and a point (x,y), compute the latent phase,
+    then measure the deviation of the latent phase trajectory from 
+    the assumed limit cycle
+    '''
+    # compute latent phase
+    lp, _ = get_latent_phase(data, x, y)
+    lc_x, lc_y, lc_t = get_limit_cycle(data)
+    
+    # run a simulation starting at latent phase along limit cycle, 
+    phases = lc_to_phase(lc_x, lc_y, lc_t)
+    
+    
+    lat_start = phases[lp]
+    
+    lat_data = VanderPolSim(mu = data.mu, T = data.T, dt = data.dt,
+                           x0 = lat_start[0], y0 = lat_start[1]).run_sim()
+    
+    # run another starting at true trajectory
+    true_data = VanderPolSim(mu = data.mu, T = data.T, dt = data.dt,
+                           x0 = x, y0 = y).run_sim()
+    
+    
+    # return latent & true trajectories
+    return (lat_data, true_data)
+
+
 mu = 3
 T = 50
 dt = .001
@@ -459,7 +483,7 @@ plot_limit_cycle = False  # Assuming at least 2 full periods of oscillation, com
 plot_eigen_decomp = False# Compute the eigenvalues/eigenvectors along the limit cycle & display them
 plot_perturbation_analysis = False # perturb along an eigenvector & compute its linearized growth for each point on the limit cycle
 plot_traj_perturbations = False # numerically simulate a given perturbation along given points of a limit cycle
-plot_pert_along_evecs = True # Perturb the limit cycle along an eigenvector and plot the convergence results
+plot_pert_along_evecs = False # Perturb the limit cycle along an eigenvector and plot the convergence results
 plot_convergence_analysis = False# simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase
 ttc_vs_phase_vs_mu = False# similar to plot convergence analysis, except do so for various values of mu
 
@@ -748,10 +772,24 @@ if (ttc_vs_phase_vs_mu):
     plt.xlabel('Starting phase of perturbation limit cycle')
     ax1.legend()
 
+lc_x, lc_y, lc_t = get_limit_cycle(data)
+lat_data, true_data = latent_error_traj(data, lc_x[-1]+ u[0], lc_y[-1] + u[1])
 
 
+plt.figure()
+plt.plot(lat_data.y[0,:],lat_data.y[1,:],label='Approximated Trajectory')
+plt.plot(true_data.y[0,:], true_data.y[1,:],label='True Trajectory')
+plt.legend()
 
-
+diff_x = np.square(lat_data.y[0,:] - true_data.y[0,:])
+diff_y = np.square(lat_data.y[1,:] - true_data.y[1,:])
+#app_err = np.sqrt(diff_x + diff_y)
+app_err = np.abs(lat_data.y[0,:] - true_data.y[0,:])
+plt.figure()
+plt.plot(true_data.t, true_data.y[0,:],label='True Trajectory')
+plt.plot(true_data.t, lat_data.y[0,:],label='Approx Trajectory')
+plt.plot(true_data.t, app_err, label='Error')
+plt.legend()
 print("Simulation Complete.")
 plt.show()
 
@@ -759,41 +797,6 @@ plt.show()
 
 
 #Workspace down here
-
-# lc_x, lc_y, lc_t = get_limit_cycle(data)
-# idxs = np.linspace(0, len(lc_x)-1, num = 20, dtype=int)
-# 
-# phases = lc_to_phase(lc_x, lc_y, lc_t)
-# 
-# # get latent phase for each point around limit cycle
-# lat_phases = []
-# ttcs = []
-# 
-# for i in idxs:
-#     lp, ttc = get_latent_phase(data, lc_x[i] + u[0], lc_y[i] + u[1])
-#          
-#     
-#     lat_phases.append(lp)
-#     ttcs.append(ttc)
-#     
-# 
-# # given latent phases, run a simulation at a latent phase and compare it to its actual trajectory
-# for i in np.arange(len(ttcs)):
-#     print(lat_phases[i], ttcs[i])
-# 
-# # plot the limit cycle and trajectory starting at the last perturbed point
-# plt.plot(lc_x, lc_y)
-# pts = perturb_limit_cycle(data, lc_x, lc_y, u, [idxs[-1]])
-# 
-# # how close to trajectory
-# dists = []
-# num_pts = ttc / dt
-# 
-# for i in np.arange(num_pts):
-#     #dists.append(dist_to_limit_cycle(lc_x, lc_y, pts[0,i], pts[1,i]))
-#     dists.append(data.dt * i)
-# plt.scatter(pts[0,0:num_pts,0],pts[1,0:num_pts,0], c = dists, alpha = .9)
-# plt.colorbar()
 
 
 
