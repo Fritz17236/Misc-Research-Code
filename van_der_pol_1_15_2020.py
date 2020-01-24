@@ -3,8 +3,7 @@
 # Chris Fritz 1/15/2020
 
 #TODO: 
-# make sure latent pahse is correct: simulate trajectories and make sure they match at ttc
-# compute latent phase, replace a trajectory with its latent phase, then simulate the original trajectory to determine approx error
+# compute rmse error for sim, look at value sweeping phase
 
 ##import statements
 import numpy as np
@@ -405,14 +404,15 @@ def get_latent_phase(data, x, y, rads = False):
     # trajectory state at conv_idx
     nr_lc_x, nr_lc_y, _ = nearest_lc_point(lc_x, lc_y, traj_x[conv_idx], traj_y[conv_idx])
  
-    #phase associated with the trajectories state at ttc
-    phases = lc_to_phase(lc_x, lc_y, lc_t)
-    phase_list = [*phases.keys()]
     # find phase associated with nr_lc_pt (search dict by value)
+    # go through each lc point, if x and y match, record phase
     conv_phase = -1
-    for ph in phase_list:
-        if phases[ph] == (nr_lc_x, nr_lc_y):
-            conv_phase = ph
+    phase_list = (lc_t - lc_t[0]) / lc_period(lc_t)
+    for i in np.arange(len(lc_t)):
+        if (lc_x[i] == nr_lc_x and lc_y[i] == nr_lc_y):
+            conv_phase = phase_list[i]
+        
+        
             
     if conv_phase == -1:
         print("Could not compute convergence phase")
@@ -420,13 +420,12 @@ def get_latent_phase(data, x, y, rads = False):
     
     #wt + phi_lat = phase of convergence
     if rads:
-        phi_lat = conv_phase - (2 * np.pi * ttc / lc_period(lc_t))
+        phi_lat = np.mod(conv_phase - (2 * np.pi * ttc / lc_period(lc_t)), 2*np.pi)
         
     else:
-        phi_lat = conv_phase - (ttc / lc_period(lc_t))
+        phi_lat = np.mod(conv_phase - (ttc / lc_period(lc_t)) , 1)
 
         
-    
     closest_idx = np.argmin(np.abs(phase_list- phi_lat))
     
 
@@ -470,9 +469,9 @@ xs = data.y[0,:]
 ys = data.y[1,:]
 
     
-epsilon = 1 # perturbation strength
+epsilon = .5 # perturbation strength
 u =  epsilon * np.asarray([1, 0])
-delta = .05  # threshold for convergence (converged if dist <= delta)
+delta = .001  # threshold for convergence (converged if dist <= delta)
 ################
 
 
@@ -783,12 +782,15 @@ plt.legend()
 
 diff_x = np.square(lat_data.y[0,:] - true_data.y[0,:])
 diff_y = np.square(lat_data.y[1,:] - true_data.y[1,:])
-#app_err = np.sqrt(diff_x + diff_y)
+
 app_err = np.abs(lat_data.y[0,:] - true_data.y[0,:])
+
+per = lc_period(lc_t)
+
 plt.figure()
-plt.plot(true_data.t, true_data.y[0,:],label='True Trajectory')
-plt.plot(true_data.t, lat_data.y[0,:],label='Approx Trajectory')
-plt.plot(true_data.t, app_err, label='Error')
+plt.plot(true_data.t/per, true_data.y[0,:],label='True Trajectory')
+plt.plot(true_data.t/per, lat_data.y[0,:],label='Approx Trajectory')
+plt.plot(true_data.t/per, app_err, label='Error')
 plt.legend()
 print("Simulation Complete.")
 plt.show()
