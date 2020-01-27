@@ -2,8 +2,7 @@
 
 # Chris Fritz 1/15/2020
 
-#TODO: 
-# compute rmse error for sim, look at value sweeping phase
+
 
 ##import statements
 import numpy as np

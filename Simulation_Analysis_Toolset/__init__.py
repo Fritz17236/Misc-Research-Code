@@ -12,9 +12,9 @@ from scipy.integrate import solve_ivp
 from scipy.signal import argrelextrema
 from abc import ABC, abstractmethod 
 import cmath
+    
 
-#Abstract class for simulating dynamical systems. Uses scipy.solve_ivp RK45 by default.
-class DynamicalSystemSim():
+class DynamicalSystemSim(ABC):
     '''
      Abstract base class for simulating dynamical systems.
      Client must implement the following methods:
@@ -22,15 +22,6 @@ class DynamicalSystemSim():
      copy_sim(cls, data
      '''
     
-
-    def copy_sim(self):
-        '''
-        Return a simulation with the same parameters
-        as the instant
-        '''
-        pass
-   
-     
     def __init__(self, X0, T, dt, t0 = 0):
         ''' Initialize dynamical system parameters including 
         X0: the initial system state (must be an iterable object)
@@ -42,15 +33,6 @@ class DynamicalSystemSim():
         self.t0 = t0
         self.T = T
         self.dt = dt
-          
-
-    def deriv(self, t, X):
-        '''
-        Compute the derivative of the system 
-        at time t and state X according to desired 
-        set of equations defining the dynamical system
-        '''
-        pass
   
     
     def run_sim(self):
@@ -78,14 +60,33 @@ class DynamicalSystemSim():
         
         
         return sim_data
+                 
+    @abstractmethod
+    def deriv(self, t, X):
+        '''
+        Compute the derivative of the system 
+        at time t and state X according to desired 
+        set of equations defining the dynamical system
+        '''
+        pass    
+        
+    @abstractmethod
+    def copy_sim(self):
+        '''
+        Return a simulation with the same parameters
+        as the instant
+        '''
+        pass
+
     
-class OscillatorySimAnalyzer():
+    
+class OscillatorySimAnalyzer(ABC):
     '''
     Base class for analyzing data from DynamicalSystemSim Objects that
     contain stable limit cycles. (Oscillatory behavior)
     '''
     
-    ## Present methods
+    
     def perturb_limit_cycle(self, sim, limit_cycle, u, indices):
         '''
         Given sim data, and a set of points of the limit cycle, perturb each limit_cycle[i] by
@@ -106,13 +107,13 @@ class OscillatorySimAnalyzer():
         print('Perturbed Simulations Complete...')
         return pert_sims
             
-    ## Abstract methods need implementation to use class
    
     def lc_period(self, limit_cycle):
         '''
         Given a limit cycle, determine the period of limit cycle oscillation.
         '''
         return limit_cycle['t'][-1] - limit_cycle['t'][0]
+
 
     def lc_times_to_phases(self, limit_cycle, rads = False):
         ''' 
@@ -131,7 +132,85 @@ class OscillatorySimAnalyzer():
                 phases.append(t/T)
                 
         return phases
+    
+    
+    def get_traj_dist_from_lc(self, limit_cycle, traj):
+        '''
+        Given a limit cycle and a trajectory (2,N array), compute the distance
+        from the limit cycle for each point on the trajectory and
+        return the distances
+        '''
+        return np.asarray([
+            self.dist_to_limit_cycle(limit_cycle, traj[:,i])
+             for i in np.arange(traj.shape[1])
+             ])
+             
+    ## Abstract methods need implementation 
 
+
+    def idx_of_lc_convergence(self, limit_cycle, trajectory, delta):
+        '''
+        Given a limit cycle, a distance delta, and trajectory (Dim, N array).
+        Determine the smallest index such that the trajectory is within 
+        a distance of delta from the limit cycle. This does not guarantee
+        the trajectory is *always* within delta of the limit cycle after the
+        returned index.
+        '''
+        pass
+    
+        def converged(X, limit_cycle, delta):
+            ''' Check if a point X is within delta of limit_cycle '''
+            
+            if self.dist_to_limit_cycle(limit_cycle, X) <= delta:
+                return True
+            
+            else:
+                return False
+    
+    
+        def bin_search_conv_idx(idxs):
+            '''
+            Recursively implement binary search to find smallest index of convergence
+            in given trajectory
+            '''
+            
+            if len(idxs) == 0:
+                return -1
+            else:
+                midpoint = np.ceil(len(idxs)/2)
+                search_idx = idxs[midpoint]
+                curr_conv = converged(limit_cycle, trajectory[search_idx], delta)
+                prev_conv = converged(limit_cycle, trajectory[search_idx - 1], delta)
+                
+            if curr_conv: # if current converged
+                    
+                if not prev_conv: # if previous not converged stop
+                    return search_idx
+                
+                else: # otherwise check left half
+                    return bin_search_conv_idx(idxs[0:midpoint])
+                        
+            
+            else: #check right half
+                return bin_search_conv_idx(idxs[midpoint:])
+            
+            
+        
+        # find first point of convergence
+        conv_idx = bin_search_conv_idx(np.arange(trajectory.shape[1]))
+
+
+        if conv_idx is  -1: #if binsearch fails
+            print(
+            "trajectory starting at ",trajectory[:,0], " does not converge to limit cycle."
+            )
+            return NaN
+        
+        else:
+            return conv_idx    
+       
+       
+    ## Abstract methods need implementation by subclass    
     @abstractmethod
     def get_limit_cycle(self, sim_data):
         ''' 
@@ -157,17 +236,6 @@ class OscillatorySimAnalyzer():
         pass
 
 
- 
-        
-    
-
-
-
-
-
-
-## Run Simulation & set parameters here
-
     @abstractmethod
     def dist_to_limit_cycle(self, limit_cycle, X):
         '''
@@ -183,30 +251,8 @@ class OscillatorySimAnalyzer():
         '''
         pass
         
-        
-       
 
-    
-# simulation parameters
 
-    @abstractmethod
-    def get_traj_dist_from_lc(self, limit_cycle, trajectory):
-        '''
-        Given a limit cycle and a trajectory, compute the distance
-        from the limit cycle for each point on the trajectory and
-        return the distances
-        '''
-        pass
-        
-    @abstractmethod  
-    def time_to_convergence(self, limit_cycle, trajectory, delta):
-        '''
-        Given a limit cycle, a distance delta, and trajectory.
-        Determine the smallest elapsed time such that the trajectory is within 
-        a distance of delta from the limit cycle
-        '''
-        pass
-    
 class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
     ''' 
     Analysis for Planar (2-dimensional) limit cycles.
@@ -229,6 +275,9 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
         # search for the maximum values in the data
         extrema = argrelextrema(xs, np.greater)[0]
         
+        if len(extrema) < 2:
+            raise Exception("Only 1 maximum detected in trajectory - run simulation longer?")
+        
         # this gives us a period of oscillation, return the state for times in this period
         idxs = np.arange(extrema[-2],extrema[-1] + 1)
         
@@ -239,7 +288,8 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
         
         return limit_cycle
     
-    def nearest_lc_pt(self, limit_cycle, X):
+    
+    def nearest_lc_point(self, limit_cycle, X):
         '''
         Given a point X and a limit cycle, return
         the index and distance of the point on the limit cycle
@@ -256,6 +306,7 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
         mindex = np.argmin(dists)
         return dists[mindex], mindex
     
+    
     def dist_to_limit_cycle(self, limit_cycle, X):
         ''' 
         Compute the Euclidean Distance from X to closest point
@@ -265,29 +316,7 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
         min_dist, _ = self.nearest_lc_point(limit_cycle, X)
     
         return min_dist
-        
-    
-    
-    @abstractmethod
-    def lc_eigen_decomp(self):
-        pass
-          
-    
 
-
-
-
-
-def evec_ang(lc_inst_x, lc_inst_y, evec_x, evec_y):
-    '''
-    given a vector parrallel to the limit cycle, compute the angle
-    between that vector and the provided eigenvector evec
-    '''
-    lc = np.asarray([lc_inst_x, lc_inst_y])
-    evec = np.asarray([evec_x, evec_y])
-    return np.arccos(lc.T@evec)
-
-    
     
              
         
