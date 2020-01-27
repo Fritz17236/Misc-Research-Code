@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from scipy.signal import argrelextrema
 import cmath
-from numpy import iscomplex
 
 ## Class Definitions
 class VanderPolSim:
