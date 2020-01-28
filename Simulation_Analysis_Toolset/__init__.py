@@ -12,7 +12,6 @@ from scipy.integrate import solve_ivp
 from scipy.signal import argrelextrema
 from abc import ABC, abstractmethod 
 import cmath
-from builtins import int
     
 
 class DynamicalSystemSim(ABC):
@@ -336,9 +335,8 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
         return min_dist
 
     
-             
         
-
+        
 
                 
     
