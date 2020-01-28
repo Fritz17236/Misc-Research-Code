@@ -12,6 +12,7 @@ from scipy.integrate import solve_ivp
 from scipy.signal import argrelextrema
 from abc import ABC, abstractmethod 
 import cmath
+from builtins import int
     
 
 class DynamicalSystemSim(ABC):
@@ -46,7 +47,9 @@ class DynamicalSystemSim(ABC):
             self.deriv,   # Derivative function
             (self.t0, self.T),       # Total time interval
             self.X0,  # Initial State
-            t_eval = np.arange(self.t0, self.T, self.dt)  # Returned evaluation time points
+            t_eval = np.arange(self.t0, self.T, self.dt),  # Returned evaluation time points
+            method='LSODA',  #Radau solver for stiff systems
+            dense_output=True
             )
         
         sim_data = {}
@@ -102,7 +105,7 @@ class OscillatorySimAnalyzer(ABC):
             
             pert_sim = sim.copy_sim()
             pert_sim.X0 = limit_cycle['X'][:, idx] + u[:, idx]
-            pert_sims['pert_idx=%i'%idx] = pert_sim.run_sim()
+            pert_sims['%i'%idx] = pert_sim.run_sim()
         
         print('Perturbed Simulations Complete...')
         return pert_sims
@@ -131,7 +134,7 @@ class OscillatorySimAnalyzer(ABC):
             for t in limit_cycle['t'] - t0:
                 phases.append(t/T)
                 
-        return phases
+        return np.asarray(phases)
     
     
     def get_traj_dist_from_lc(self, limit_cycle, traj):
@@ -145,9 +148,8 @@ class OscillatorySimAnalyzer(ABC):
              for i in np.arange(traj.shape[1])
              ])
              
+    {}  
     ## Abstract methods need implementation 
-
-
     def idx_of_lc_convergence(self, limit_cycle, trajectory, delta):
         '''
         Given a limit cycle, a distance delta, and trajectory (Dim, N array).
@@ -156,48 +158,55 @@ class OscillatorySimAnalyzer(ABC):
         the trajectory is *always* within delta of the limit cycle after the
         returned index.
         '''
-        pass
     
         def converged(X, limit_cycle, delta):
             ''' Check if a point X is within delta of limit_cycle '''
             
-            if self.dist_to_limit_cycle(limit_cycle, X) <= delta:
+            if np.less_equal(self.dist_to_limit_cycle(limit_cycle, X), delta):
+
                 return True
             
             else:
                 return False
     
     
-        def bin_search_conv_idx(idxs):
+        def bin_search_conv_idx(trajectory, limit_cycle, delta):
             '''
             Recursively implement binary search to find smallest index of convergence
             in given trajectory
             '''
             
-            if len(idxs) == 0:
-                return -1
-            else:
-                midpoint = np.ceil(len(idxs)/2)
-                search_idx = idxs[midpoint]
-                curr_conv = converged(limit_cycle, trajectory[search_idx], delta)
-                prev_conv = converged(limit_cycle, trajectory[search_idx - 1], delta)
+            if converged(trajectory[:,0], limit_cycle, delta):
+                return 0
+            
+            
+            left = 0
+            right = len(trajectory[0,:])-1
+            
+            
+            while right - left > 0:
+                if left < 0 or right < 0 :
+                    raise Exception("negative index during binary search: left = %i, right = %i"%(left, right))
                 
-            if curr_conv: # if current converged
+                midpoint = left +  int(
+                    np.ceil((right - left) / 2)
+                    )
+                
+                if converged(trajectory[:,midpoint], limit_cycle, delta):
+                    if not converged(trajectory[:,midpoint-1], limit_cycle, delta):
+                        return midpoint
                     
-                if not prev_conv: # if previous not converged stop
-                    return search_idx
-                
-                else: # otherwise check left half
-                    return bin_search_conv_idx(idxs[0:midpoint])
-                        
-            
-            else: #check right half
-                return bin_search_conv_idx(idxs[midpoint:])
-            
-            
-        
-        # find first point of convergence
-        conv_idx = bin_search_conv_idx(np.arange(trajectory.shape[1]))
+                    else:
+                        right = midpoint  
+                    
+                else:
+                    left = midpoint
+                    
+                     
+            return -1
+         
+
+        conv_idx = bin_search_conv_idx(trajectory, limit_cycle, delta)
 
 
         if conv_idx is  -1: #if binsearch fails

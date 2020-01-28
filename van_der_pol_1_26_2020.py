@@ -8,7 +8,6 @@ import cmath
 
 
 ## TODO:
-# finish importing plotting from old vanderpol code (1_15_2020)
 # latent_phase computation & implementation
 
 class VanderPolSim(sat.DynamicalSystemSim):
@@ -139,9 +138,7 @@ plot_eigen_decomp          = 0   # Compute the eigenvalues/eigenvectors along th
 
 plot_perturbation_analysis = 0   # Perturb along an eigenvector & compute its linearized growth for each point on the limit cycle
 
-plot_traj_perturbations    = 0   # Numerically simulate a given perturbation along given points of a limit cycle
-
-plot_pert_along_evecs      = 0   # Perturb the limit cycle along an eigenvector and plot the convergence results
+plot_traj_perturbations    = 1   # Numerically simulate a given perturbation along given points of a limit cycle
 
 plot_convergence_analysis  = 0   # Simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase
 
@@ -283,61 +280,29 @@ if (plot_perturbation_analysis):
     
 if (plot_traj_perturbations):
     print('Plotting perturbation trajectories...')
+
     if not plot_limit_cycle:
-        lc_x, lc_y, _ = get_limit_cycle(data)
-    
-    if not (plot_eigen_decomp):
-        ed = eigen_decomp(data)
-
-    #find index of point on limit cycle with maximum eigenvalue(neg)
-
-    max_idx = np.argmax(ed["l_neg"])
-    min_idx = np.argmin(ed["l_neg"])
-    idxs = np.linspace(0,len(lc_x)-1,num = 100,dtype = int)
-    #idxs = [max_idx, min_idx]
-    #idxs = [-4] 
-    pts = perturb_limit_cycle(data, lc_x, lc_y,  u, indices = idxs)
-    mins = np.zeros((pts.shape[1],pts.shape[2]))
-    plt.figure()    
-    for i in np.arange(len(idxs)):
-        print('%i/%i'%(i+1,len(idxs)))
-        plt.plot(pts[0,:,i],pts[1,:,i])
-
-    plt.plot(lc_x,lc_y,c='red')           
-
-if plot_pert_along_evecs:
-    if not plot_limit_cycle:
-        lc_x, lc_y, lc_t = get_limit_cycle(data)
+        limit_cycle = vpa.get_limit_cycle(data)
     
     if not plot_eigen_decomp:
-        ed = eigen_decomp(data)
+        ed = vpa.lc_eigen_decomp(data, limit_cycle)
     
     # given indices, perturb them along an eigenvector and plot the convergence results
-    idxs = np.linspace(0, len(lc_x)-1,num = 800, dtype = int )
-    fig, ax1 = plt.subplots()
-    ttcs = []
-    for j,i in enumerate(idxs):
-        print("%i/%i..."%(j+1,len(idxs)))
-        evec = epsilon * ed["evec_neg"][:,i]
-        pert = (lc_x[i] + evec[0], lc_y[i] + evec[1])
-        # compute a trajectory starting at pert
-        pert_data = VanderPolSim(mu = mu, x0 = pert[0], y0 = pert[1], T = T, dt = dt).run_sim()    
-        pert_traj_x = pert_data.y[0,:]
-        pert_traj_y = pert_data.y[1,:]
-        pert_traj_ts = pert_data.t
-        
-        # compute time to convergence
-        ttcs.append(time_to_convergence(lc_x, lc_y, pert_traj_x, pert_traj_y, pert_traj_ts, delta))
-        
-        
-    ax1.scatter(lc_t[idxs] / lc_period(lc_t),ttcs, label = "time to convergence")
+    idxs = np.linspace(0, len(limit_cycle['t'])-1,num = 100, dtype = int )
+    us = limit_cycle['X'] + epsilon * ed['evec_neg']
+    pert_sims = vpa.perturb_limit_cycle(sim, limit_cycle, us, idxs)
     
-    ax2 = ax1.twinx()
+    plt.figure("perturbation_trajectories")
+    for i in idxs:
+        pert_xs = pert_sims['%i'%i]['X'][0,:]
+        pert_ys = pert_sims['%i'%i]['X'][1,:]
+        plt.plot(pert_xs, pert_ys, label='sim %i'%i)
+    
+    plt.xlabel('X (Voltage)')
+    plt.ylabel('Y')
+    plt.title('Perturbations Along Radial Axis$')
+       
 
-    ax2.plot(lc_t[idxs]/ lc_period(lc_t), ed["l_neg"][idxs],'--',label='$\lambda_{-}$')    
-    ax2.plot(lc_t[idxs]/ lc_period(lc_t), ed["l_pos"][idxs],'--',label='$\lambda_{+}$')
-    ax2.axhline(y=0)
-    plt.legend()
 
 if (plot_convergence_analysis):
     print("Plotting convergence analysis...")
