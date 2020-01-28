@@ -259,7 +259,16 @@ class OscillatorySimAnalyzer(ABC):
         Return the index of the point and the associated distance
         '''
         pass
-        
+    
+    @abstractmethod
+    def get_latent_phase(self, X, rads = False):
+        '''
+        Given a point X that is assumed to converge to a limit cycle,
+        compute the latent phase of the point X. That is, compute the
+        initial phase along the limit cycle that will intersect the trajectory 
+        at the time and point of convergence.
+        '''
+
 
 
 class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):

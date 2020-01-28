@@ -417,8 +417,6 @@ if (plot_conv_analysis):
     
     #plt.savefig('ttc_vs_perturbation_strength_delta_frac.png',bbox_inches = 'tight')
         
-    
-
 print("Simulation Complete.")
 plt.show()
 
