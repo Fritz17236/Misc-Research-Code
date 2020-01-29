@@ -76,7 +76,44 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
         pass
     
     
-    def get_latent_phase(sim, X, delta, rads = False):
+    def helper_latent_phase(self, sim, X, limit_cycle, delta, rads = True):
+        '''
+        Helper function does most of the work for get_latent_phase
+        and get_latent_error_trajectory
+        '''
+        
+        # start simulation at initial condition & run simulation for T
+        pert_sim = sim.same_sim_at_point(X)
+        pert_sim_data = pert_sim.run_sim()
+        
+        # get time to convergence, 
+        traj_conv_idx = self.traj_idx_of_lc_convergence(limit_cycle, pert_sim_data['X'], delta)
+        pert_ttc = pert_sim_data['t'][traj_conv_idx]
+        
+        if traj_conv_idx == -1:
+            print("Could not compute convergence phase")
+            return np.nan
+        
+        #get phase of convergence
+        # trajectory state at conv_idx
+        _, lc_conv_pt, lc_conv_idx = self.nearest_lc_point(limit_cycle, pert_sim_data['X'][:,traj_conv_idx])
+        lc_phases = self.lc_times_to_phases(limit_cycle, rads = True)
+        lc_convergence_phase = lc_phases[lc_conv_idx]
+        
+        # compute latent phase as (wt + latent_phase = phase_of_convergence)
+        if rads:
+            w = 2 * np.pi  / self.lc_period(limit_cycle)
+            latent_phase = np.mod(lc_convergence_phase - w * pert_ttc, 2 * np.pi)            
+    
+        else:
+            lc_convergence_phase = lc_convergence_phase / (2 * np.pi)
+            f = 1 / self.lc_period(limit_cycle) 
+            latent_phase = np.mod(lc_convergence_phase - f * pert_ttc , 1)
+            
+        return latent_phase, traj_conv_idx, lc_conv_idx, ttc, pert_sim
+    
+    
+    def get_latent_phase(self, sim, X, delta, limit_cycle, rads = False):
         ''' 
         Given a point X in the phase plane, compute its latent phase according to the
         simulation sim.
@@ -85,54 +122,47 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
         Also returns time to convergence.
         '''
     
-        
-        ## make sure lc at ttc is same as latent phase after ttc
-        
-        # start simulation at initial condition & run simulation for T
-        pert_sim = sim.copy_sim()
-        pert_sim.X0 = X
-        pert_sim_data = pert_sim.run_sim()
-        
-        
-        # get time to convergence, 
-        pert_ttc = pert_sim['t'][aha.idx_of_lc_convergence(limit_cycle, pert_sim['X'], delta)]
-        
-        #get phase of convergence
-        # trajectory state at conv_idx
-        nr_lc_x, nr_lc_y, _ = nearest_lc_point(lc_x, lc_y, traj_x[conv_idx], traj_y[conv_idx])
-     
-        # find phase associated with point of convergence
-        conv_phase = -1
-        phase_list = (lc_t - lc_t[0]) / lc_period(lc_t)
-        for i in np.arange(len(lc_t)):
-            if (lc_x[i] == nr_lc_x and lc_y[i] == nr_lc_y):
-                conv_phase = phase_list[i]
-            
-            
-                
-        if conv_phase == -1:
-            print("Could not compute convergence phase")
-            return NaN
-        
-        #wt + latent_phase = phase of convergence
-        if rads:
-            phi_lat = np.mod(conv_phase - (2 * np.pi * ttc / lc_period(lc_t)), 2*np.pi)
-            
-        else:
-            phi_lat = np.mod(conv_phase - (ttc / lc_period(lc_t)) , 1)
-    
-            
-        closest_idx = np.argmin(np.abs(phase_list- phi_lat))
-        
-    
-        return phase_list[closest_idx], ttc 
+        (
+            latent_phase,
+            traj_conv_idx,
+            lc_conv_idx,
+            pert_ttc,
+            pert_sim
+               ) = self.helper_latent_phase(sim, X, limit_cycle, delta, rads)
+
+        return (latent_phase, pert_ttc) 
     
 
-#endregion 
-
-
-
-#region Analysis Functions
+        
+    def get_latent_error_trajectory(self, sim, limit_cycle, X, errfunc):
+        '''
+        Compute the difference at each point of a sim trajectory starting 
+        at X and its latent phase approximation according to the provided 
+        errfunc. 
+        '''   
+        (
+            latent_phase,
+            traj_conv_idx,
+            lc_conv_idx,
+            pert_ttc,
+            pert_sim
+        ) = self.helper_latent_phase(sim, X, limit_cycle, delta)
+        
+        pert_data = pert_sim.run_sim()
+        
+        # find limit cycle point nearest to trajectory at convergence         
+        approx_sim = sim.same_sim_at_point(limit_cycle['X'][:,lc_conv_idx])
+        approx_data = approx_sim.run_sim()
+        return (
+            pert_data['X'],
+            approx_data['X'],
+            self.trajectory_difference(pert_data['X'], approx_data['X'], errfunc),
+            lc_conv_idx
+            )
+#endregion            
+        
+        
+#region  Analysis Functions
         
 def ttc(eps, delta):
     ''' time to convergence as function of perturbation along radial axis'''
@@ -190,14 +220,13 @@ def cart_to_polar(xs, ys):
     rs = np.sqrt(np.square(xs) + np.square(ys))
     thetas = np.arctan2(ys, xs)
     return (rs, thetas)
-
 #endregion 
     
     
-    
-#region Simulation Paramters & Configuration
-
-# Figure Configuration
+#region Simulation Configuration 
+  
+  
+# Figure Configuration 
 plt.rcParams['figure.figsize'] = [8, 4.5]
 plt.rcParams['figure.dpi'] = 200
 
@@ -207,9 +236,10 @@ r0   = 1 + epsilon  #radial perturbation by epsilon
 phi0 = 0
 period = 1
 x, y = polar_to_cart(r0, phi0)
-T = 25
-dt = .0001
-delta = .001
+T = 10
+dt = .001
+delta = 10**-6
+
 
 # Data Analysis & Plotting Configuration 
 plot_trajectory            = 0   # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation including nullclines
@@ -220,14 +250,17 @@ plot_traj_perturbations    = 0   # Numerically simulate a given perturbation alo
 
 plot_conv_analysis         = 0   # Simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase/phi
 
-#endregion
+plot_approx_err_voltage    = 1   # Given a point, compute its latent-approximated & actual trajectories and plot error along voltage axis
 
+#endregion
+ 
 
 
 #region  Run Simulation
 sim = AndronovHopfSim(X0 = np.asarray([x, y]), T = T, dt = dt, w = 2*np.pi / period)
 aha = AndronovHopfAnalyzer()
 data = sim.run_sim()
+limit_cycle = aha.get_limit_cycle(data)
     
 xs = data['X'][0,:]
 ys = data['X'][1,:]
@@ -239,7 +272,7 @@ phi_exacts = data['w']*ts
 x_exacts = r_exacts * np.cos(phi_exacts)
 y_exacts = r_exacts * np.sin(phi_exacts) 
 
-plt.close()
+
 
 
 
@@ -291,10 +324,7 @@ if (plot_limit_cycle):
 if (plot_traj_perturbations):
     print('Plotting perturbation trajectories...')
 
-    if not plot_limit_cycle:
-        limit_cycle = aha.get_limit_cycle(data)
-    
-    
+
     # given indices, perturb them along an eigenvector and plot the convergence results
     idxs = np.linspace(0, len(limit_cycle['t'])-1,num = 100, dtype = int )
     # add an (x,y) component for each perturbation
@@ -316,12 +346,6 @@ if (plot_traj_perturbations):
 if (plot_conv_analysis):
     print("Plotting convergence analysis (sweeping phi)...")
     
-    if not plot_limit_cycle:
-        limit_cycle = aha.get_limit_cycle(data)
-    # perturb along radial axis, compute ttc, sweep phase and phi
-    
-    # Sweep along phi and perturb radial axis
-    # given indices, perturb them along an eigenvector and plot the convergence results
     idxs = np.linspace(0, len(limit_cycle['t'])-1,num = 10, dtype = int )
     # add an (x,y) component for each perturbation
     # for each point, compute (x,y), scale by 1 + epsilon that u
@@ -335,7 +359,7 @@ if (plot_conv_analysis):
     for i, idx in enumerate(idxs):
         print('%i/%i'%(i+1, len(idxs)))
         # compute ttc of trajectory
-        conv_idx = aha.idx_of_lc_convergence(limit_cycle, pert_sims[str(idx)]['X'], delta)
+        conv_idx = aha.traj_idx_of_lc_convergence(limit_cycle, pert_sims[str(idx)]['X'], delta)
         ttcs.append(pert_sims[str(idx)]['t'][conv_idx])
         
         
@@ -354,8 +378,8 @@ if (plot_conv_analysis):
 
     print("Plotting convergence analysis (sweeping epsilon)...")
     
-    if not plot_limit_cycle:
-        limit_cycle = aha.get_limit_cycle(data)
+
+        
     # perturb along radial axis, compute ttc, sweep phase and phi
     
     epsilons = np.linspace(0.1, 10, num = 25)
@@ -370,7 +394,7 @@ if (plot_conv_analysis):
         pert_sim = sim.copy_sim()
         pert_sim.X0 = np.asarray([1 + eps, 0]) # perturb radially at phi = 0
         pert_data = pert_sim.run_sim()
-        ttcs_numeric.append(pert_data['t'][aha.idx_of_lc_convergence(limit_cycle, pert_data['X'], deltas[i])])
+        ttcs_numeric.append(pert_data['t'][aha.traj_idx_of_lc_convergence(limit_cycle, pert_data['X'], deltas[i])])
         ttcs_exact.append(ttc(eps, deltas[i]))
     
     #plot and compare to analytic ttc
@@ -383,13 +407,15 @@ if (plot_conv_analysis):
     plt.legend()
     
     #plt.savefig('ttc_vs_perturbation_strength_delta_frac.png',bbox_inches = 'tight')
+     
         
-print("Simulation Complete.")
-plt.show()
+#endregion 
 
 
-#Workspace Down Here:
+#region Workspace  Here: 
 
+ 
+ 
 # eps = np.linspace(0.001,10,num=1000)
 # deltas = eps * .001
 # ttcs = [ttc(eps[i], deltas[i]) for i in np.arange(len(eps))]
@@ -479,8 +505,55 @@ plt.show()
 # # plt.savefig("ttc_epsilon_sweep_area.png",bbox_inches='tight') 
 
 
+
 #endregion
 
+
+if (plot_approx_err_voltage):
+    
+    
+    def voltage_err(X, Y):
+        ''' error along voltage axis'''
+        return np.abs(X[0] - Y[0])
+    
+    pert_point = np.asarray([1 + epsilon, 0])
+    
+    (
+        true_traj,
+        approx_traj,
+        err_traj,
+        conv_idx
+    ) = aha.get_latent_error_trajectory(
+        sim,
+        limit_cycle,
+        pert_point,
+        voltage_err,
+        )
+    
+    ts = sim.dt * np.arange(len(err_traj))
+
+    plt.figure("approx err phase space")
+    plt.scatter(true_traj[0,:], true_traj[1,:],marker = 'x', label = 'True Simulated Trajectory', c = ts)
+    plt.scatter(approx_traj[0,:], approx_traj[1,:], marker = '.', label = 'Limit Cycle Approximation', c = 'green')
+    plt.colorbar()
+    plt.xlabel('X (voltage)')
+    plt.ylabel('Y')
+    plt.scatter(approx_traj[0,conv_idx], approx_traj[1,conv_idx],label='Point of Convergence', c = 'red')
+    plt.title('Approximating Perturbed Trajectory by Limit Cycle with Latent Phase')
+    plt.legend()
+    
+    
+    plt.figure("approx error voltage ")
+    plt.plot(ts, true_traj[0,:], label = 'True Simulated Trajectory')
+    plt.plot(ts, approx_traj[0,:], label = 'Limit Cycle Approximation')
+    plt.plot(ts, err_traj, label='Approximation Error')
+    plt.xlabel('Time')
+    plt.ylabel("Voltage")
+    plt.legend()
+ 
+
+print("Simulation Complete.")
+plt.show()
 
 
 

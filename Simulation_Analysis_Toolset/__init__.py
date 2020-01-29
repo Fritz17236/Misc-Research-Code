@@ -9,10 +9,14 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
-from scipy.signal import argrelextrema
+from scipy.signal import find_peaks
 from abc import ABC, abstractmethod 
 import cmath
     
+
+# check get latent phase
+# perturbation at 0 should give phase 0 
+
 
 class DynamicalSystemSim(ABC):
     '''
@@ -63,6 +67,12 @@ class DynamicalSystemSim(ABC):
         
         return sim_data
                  
+    def same_sim_at_point(self, X):
+        ''' Copy a simulation sim, except begin at a different state X '''
+        sim_copy = self.copy_sim()
+        sim_copy.X0 = X
+        return sim_copy
+    
     @abstractmethod
     def deriv(self, t, X):
         '''
@@ -88,6 +98,8 @@ class OscillatorySimAnalyzer(ABC):
     contain stable limit cycles. (Oscillatory behavior)
     '''
     
+
+    
     
     def perturb_limit_cycle(self, sim, limit_cycle, u, indices):
         '''
@@ -95,16 +107,15 @@ class OscillatorySimAnalyzer(ABC):
         u[i] for i in indices. Simulate the trajectory and return a dictionary containing data from each perturbed
         simulation.
         '''
-    
+
         pert_sims = {}
         print("Perturbing Simulation along limit cycle at %i points..."%len(indices))
         
         for i, idx in enumerate(indices):
-            print('%i/%i...'%(i+1, len(indices)))
             
-            pert_sim = sim.copy_sim()
-            pert_sim.X0 = limit_cycle['X'][:, idx] + u[:, idx]
-            pert_sims['%i'%idx] = pert_sim.run_sim()
+            print('%i/%i...'%(i+1, len(indices)))
+            pert_X0 = limit_cycle['X'][:, idx] + u[:, idx]
+            pert_sims['%i'%idx] = sim.same_sim_at_point(pert_X0) 
         
         print('Perturbed Simulations Complete...')
         return pert_sims
@@ -146,10 +157,19 @@ class OscillatorySimAnalyzer(ABC):
             self.dist_to_limit_cycle(limit_cycle, traj[:,i])
              for i in np.arange(traj.shape[1])
              ])
-             
-    {}  
-    ## Abstract methods need implementation 
-    def idx_of_lc_convergence(self, limit_cycle, trajectory, delta):
+
+ 
+    def trajectory_difference(self, X, Y, errfunc):
+        '''
+        Given two (Dim x N trajectories), X & Y, return their 
+        difference according to a predefined error function. 
+        '''
+        return np.asarray([ errfunc(X[:,i], Y[:,i])
+                              for i in np.arange(len(X[0,:]))
+                               ])             
+
+
+    def traj_idx_of_lc_convergence(self, limit_cycle, trajectory, delta):
         '''
         Given a limit cycle, a distance delta, and trajectory (Dim, N array).
         Determine the smallest index such that the trajectory is within 
@@ -241,9 +261,7 @@ class OscillatorySimAnalyzer(ABC):
         eig["lambda_i"] ith eigenvalues for points along the limit cycle
         eig["evec_i"] eigenvector associated with l_i each point along limit cycle
         '''
-        pass
-
-
+    
     @abstractmethod
     def dist_to_limit_cycle(self, limit_cycle, X):
         '''
@@ -267,8 +285,16 @@ class OscillatorySimAnalyzer(ABC):
         initial phase along the limit cycle that will intersect the trajectory 
         at the time and point of convergence.
         '''
+        pass
 
-
+    @abstractmethod
+    def get_latent_error_trajectory(self, sim, limit_cycle, X, errfunc):
+        '''
+        Given a simulation and a point X, compute the latent phase of X
+        and return the sim, its trajectory, and the latent trajectory of X
+        as well as their difference according to the supplied errfunc
+        '''
+    
 
 class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
     ''' 
@@ -278,6 +304,7 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
     
     def get_limit_cycle(self, sim_data):
         ''' 
+        going along first axis  of state ...
         This code assumes existence of a stable limit cycle and that the simulaion
         data provided captures at least one full period of limit cycle oscillation.
         Given a sim data struct, compute & return the limit cycle as a
@@ -290,19 +317,24 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
         ys = sim_data['X'][1,:]
         
         # search for the maximum values in the data
-        extrema = argrelextrema(xs, np.greater)[0]
+        extrema, _ = find_peaks(xs)
         
         if len(extrema) < 2:
             raise Exception("Only 1 maximum detected in trajectory - run simulation longer?")
         
         # this gives us a period of oscillation, return the state for times in this period
-        idxs = np.arange(extrema[-2],extrema[-1] + 1)
+        idxs = np.arange(extrema[-2],extrema[-1])
+
         
         limit_cycle = {}
         
         limit_cycle['X'] = sim_data['X'][:,idxs]
         limit_cycle['t'] = sim_data['t'][idxs]
         
+        #close the limit cycle, making last data point equal to first data point and time + dt
+        last_pt = np.expand_dims(limit_cycle['X'][:,0],axis=1)
+        limit_cycle['X'] = np.append(limit_cycle['X'], last_pt, axis=1)
+        limit_cycle['t'] = np.append(limit_cycle['t'], limit_cycle['t'][-1] + sim_data['dt'])
         return limit_cycle
     
     
@@ -311,17 +343,13 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
         Given a point X and a limit cycle, return
         the index and distance of the point on the limit cycle
         nearest (by euclidian distance) to X.
-        '''
-        N = len(limit_cycle['t'])
-        xs = np.ones((N,)) * X[0]
-        ys = np.ones((N,)) * X[1]
+        '''        
+        dxs = np.square(limit_cycle['X'][0,:] - X[0])
+        dys = np.square(limit_cycle['X'][1,:] - X[1])
         
-        dxs = limit_cycle['X'][0,:] - xs
-        dys = limit_cycle['X'][1,:] - ys
-        
-        dists = np.sqrt(np.square(dxs) + np.square(dys))
+        dists = np.sqrt(dxs +  dys)
         mindex = np.argmin(dists)
-        return dists[mindex], mindex
+        return dists[mindex], limit_cycle['X'][:,mindex], mindex
     
     
     def dist_to_limit_cycle(self, limit_cycle, X):
@@ -330,11 +358,13 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
         on the limit cycle.
         '''
         
-        min_dist, _ = self.nearest_lc_point(limit_cycle, X)
+        min_dist, _, _ = self.nearest_lc_point(limit_cycle, X)
     
         return min_dist
 
     
+        
+        
         
         
 
