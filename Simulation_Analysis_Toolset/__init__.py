@@ -106,17 +106,18 @@ class OscillatorySimAnalyzer(ABC):
         simulation.
         '''
 
-        pert_sims = {}
+        pert_datas = {}
         print("Perturbing Simulation along limit cycle at %i points..."%len(indices))
         
         for i, idx in enumerate(indices):
             
             print('%i/%i...'%(i+1, len(indices)))
             pert_X0 = limit_cycle['X'][:, idx] + u[:, idx]
-            pert_sims['%i'%idx] = sim.same_sim_at_point(pert_X0) 
-        
+            pert_sim = sim.same_sim_at_point(pert_X0)
+            pert_datas['%i'%idx] = pert_sim.run_sim() 
+            
         print('Perturbed Simulations Complete...')
-        return pert_sims
+        return pert_datas
             
    
     def lc_period(self, limit_cycle):
@@ -233,22 +234,26 @@ class OscillatorySimAnalyzer(ABC):
             print(
             "trajectory starting at ",trajectory[:,0], " does not converge to limit cycle."
             )
-            return np.nan
+            return -1
         
         else:
             return conv_idx    
        
        
-    def concat_data_traj(self, data0, data1):
+    def concat_data_traj(self, data0, data1, get_clip_idx = False):
         ''' 
         Given two data objects, concatenate their state trajectories such that
         data0['X'] = data0['X']:data1['X'],
         data0['t'] = data0['t']:data1['t']
         '''
+        clip_idx = len(data0['X'][0,:])
         data0['X'] = np.append(data0['X'], data1['X'], axis=1)
         data0['t'] = np.append(data0['t'], data1['t'] )
         
-        return data0
+        if get_clip_idx:
+            return data0, clip_idx
+        else:
+            return data0
         
     ## Abstract methods need implementation by subclass    
     @abstractmethod
@@ -327,7 +332,6 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
         limit_cycle[t]
         '''
         xs = sim_data['X'][0,:]
-        ys = sim_data['X'][1,:]
         
         # search for the maximum values in the data
         extrema, _ = find_peaks(xs)
@@ -345,8 +349,17 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
         limit_cycle['t'] = sim_data['t'][idxs]
         
         #close the limit cycle, making last data point equal to first data point and time + dt
-        last_pt = np.expand_dims(limit_cycle['X'][:,0],axis=1)
-        limit_cycle['X'] = np.append(limit_cycle['X'], last_pt, axis=1)
+        last_pt = limit_cycle['X'][:,-1]
+        first_pt = limit_cycle['X'][:,0]
+        
+        
+        lin_interp = np.expand_dims((last_pt + first_pt)/2,axis = 1)
+        
+        
+        limit_cycle['X'] = np.append(limit_cycle['X'], lin_interp, axis=1)
+        limit_cycle['t'] = np.append(limit_cycle['t'], limit_cycle['t'][-1] + sim_data['dt']/2)
+        
+        limit_cycle['X'] = np.append(limit_cycle['X'], np.expand_dims(last_pt,axis=1), axis=1)
         limit_cycle['t'] = np.append(limit_cycle['t'], limit_cycle['t'][-1] + sim_data['dt'])
         return limit_cycle
     
