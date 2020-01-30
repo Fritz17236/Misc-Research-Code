@@ -66,6 +66,7 @@ class DynamicalSystemSim(ABC):
         
         
         return sim_data
+           
                  
     def same_sim_at_point(self, X):
         ''' Copy a simulation sim, except begin at a different state X '''
@@ -97,9 +98,6 @@ class OscillatorySimAnalyzer(ABC):
     Base class for analyzing data from DynamicalSystemSim Objects that
     contain stable limit cycles. (Oscillatory behavior)
     '''
-    
-
-    
     
     def perturb_limit_cycle(self, sim, limit_cycle, u, indices):
         '''
@@ -228,16 +226,30 @@ class OscillatorySimAnalyzer(ABC):
         conv_idx = bin_search_conv_idx(trajectory, limit_cycle, delta)
 
 
-        if conv_idx is  -1: #if binsearch fails
+        if conv_idx is  -1: #if binsearch fails try linear
+            for i in np.arange(len(trajectory[0,:])):
+                if converged(trajectory[:,i], limit_cycle, delta):
+                    return conv_idx
             print(
             "trajectory starting at ",trajectory[:,0], " does not converge to limit cycle."
             )
-            return NaN
+            return np.nan
         
         else:
             return conv_idx    
        
        
+    def concat_data_traj(self, data0, data1):
+        ''' 
+        Given two data objects, concatenate their state trajectories such that
+        data0['X'] = data0['X']:data1['X'],
+        data0['t'] = data0['t']:data1['t']
+        '''
+        data0['X'] = np.append(data0['X'], data1['X'], axis=1)
+        data0['t'] = np.append(data0['t'], data1['t'] )
+        
+        return data0
+        
     ## Abstract methods need implementation by subclass    
     @abstractmethod
     def get_limit_cycle(self, sim_data):
@@ -295,6 +307,7 @@ class OscillatorySimAnalyzer(ABC):
         as well as their difference according to the supplied errfunc
         '''
     
+
 
 class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
     ''' 

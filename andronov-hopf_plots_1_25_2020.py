@@ -12,8 +12,6 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import Simulation_Analysis_Toolset as sat
 
-#region Class Definitions
-
 
 class AndronovHopfSim(sat.DynamicalSystemSim):    
     ''' 
@@ -74,11 +72,11 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
     Van der Pol is a 2D system so extend PlanarLimitCycleAnalyzer class. 
     '''
     
-    def lc_eigen_decomp(self, sim_data, limit_cycle):
+    def lc_eigen_decomp(self, sim_data, limit_cycle): 
         pass
     
     
-    def helper_latent_phase(self, sim, X, limit_cycle, delta, rads = True):
+    def helper_latent_phase(self, sim, X, limit_cycle, delta, rads = True): 
         '''
         Helper function does most of the work for get_latent_phase
         and get_latent_error_trajectory
@@ -94,8 +92,7 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
         
         if traj_conv_idx == -1:
             print("Could not compute convergence phase")
-            return np.nan
-        
+            return  (np.nan, np.nan, np.nan, np.nan, np.nan)                
         #get phase of convergence
         # trajectory state at conv_idx
         _, lc_conv_pt, lc_conv_idx = self.nearest_lc_point(limit_cycle, pert_sim_data['X'][:,traj_conv_idx])
@@ -115,7 +112,7 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
         return latent_phase, traj_conv_idx, lc_conv_idx, ttc, pert_sim
     
     
-    def get_latent_phase(self, sim, X, delta, limit_cycle, rads = False):
+    def get_latent_phase(self, sim, X, delta, limit_cycle, rads = False): 
         ''' 
         Given a point X in the phase plane, compute its latent phase according to the
         simulation sim.
@@ -134,9 +131,8 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
 
         return (latent_phase, pert_ttc) 
     
-
         
-    def get_latent_error_trajectory(self, sim, limit_cycle, X, errfunc):
+    def get_latent_error_trajectory(self, sim, limit_cycle, X, errfunc): 
         '''
         Compute the difference at each point of a sim trajectory starting 
         at X and its latent phase approximation according to the provided 
@@ -161,10 +157,42 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
             self.trajectory_difference(pert_data['X'], approx_data['X'], errfunc),
             lc_conv_idx
             ) 
-#endregion            
+     
+        
+    def spaced_radial_perturbations(self, limit_cycle,  sim, tau, epsilon, delta):
+        '''
+        Perturb a limit cycle by epsilon radially, simulate its trajectory for 
+        tau time units, then perturb it again radially by epsilon.
+        Concatenate & the trajectories 
+        '''
+        
+        #initial radial perturbation by epsilon
+        first_pert_sim = sim.copy_sim()
+        first_pert_sim.X0 = np.asarray([1 + epsilon, 0])
+        first_pert_sim.t0 = 0
+        first_pert_sim.T = tau
+        first_pert_data = first_pert_sim.run_sim()
+        
+        # compute beginning of 2nd trajectory by perturbing along radial axis
+        last_first_pert_state = first_pert_data['X'][:,-1]
+        
+        r, theta = cart_to_polar(first_pert_data['X'][0,-1], first_pert_data['X'][1,-1])
+        r += epsilon
+        x0, y0 = polar_to_cart(r, theta)
+        sec_X0 = np.asarray([x0, y0])
         
         
-#region  Analysis Functions
+        #2nd perturbation after time tau has occured
+        sec_pert_sim = sim.copy_sim()
+        sec_pert_sim.X0 = sec_X0
+        sec_pert_sim.t0 = tau
+        sec_pert_sim.T = sim.copy_sim().T
+        sec_pert_data = sec_pert_sim.run_sim()
+        
+        twice_pert_data = aha.concat_data_traj(first_pert_data, sec_pert_data)
+        
+        return twice_pert_data
+        
         
 def ttc(eps, delta):
     ''' time to convergence as function of perturbation along radial axis'''
@@ -232,6 +260,7 @@ def cart_to_polar(xs, ys):
     thetas = np.arctan2(ys, xs)
     return (rs, thetas)
 
+
 def phase_approx_err(w, tau, epsilon, phi_0, delta):
     ''' 
     Compute the approximation error in phase for two epsilon pertrubations
@@ -245,15 +274,13 @@ def phase_approx_err(w, tau, epsilon, phi_0, delta):
     
     
     return w * err_time
+     
     
     
-#endregion 
-    
-    
-#region Simulation Configuration 
   
   
 # Figure Configuration 
+
 plt.rcParams['figure.figsize'] = [8, 4.5]
 plt.rcParams['figure.dpi'] = 200
 
@@ -261,9 +288,10 @@ plt.rcParams['figure.dpi'] = 200
 epsilon = .5  # perturbation strength
 r0   = 1 + epsilon  #radial perturbation by epsilon
 phi0 = 0
-period = 1
+w = 2 * np.pi 
+period = 2 * np. pi / w
 x, y = polar_to_cart(r0, phi0)
-T = 10
+T = 200
 dt = .001
 delta = 10**-6
 
@@ -279,11 +307,11 @@ plot_conv_analysis         = 0   # Simulate given perturbation for chosen indice
 
 plot_approx_err_voltage    = 0   # Given a point, compute its latent-approximated & actual trajectories and plot error along voltage axis
 
+plot_spaced_rad_perts      = 0   # Perturb radially along the limit cycle by epsilon twice space by tau time units, compute phase approximation error
 #endregion
  
 
 
-#region  Run Simulation
 sim = AndronovHopfSim(X0 = np.asarray([x, y]), T = T, dt = dt, w = 2*np.pi / period)
 aha = AndronovHopfAnalyzer()
 data = sim.run_sim()
@@ -579,28 +607,42 @@ if (plot_approx_err_voltage):
     plt.legend()
  
 
-phi_0 = 0
-epsilon = np.linspace(.001 , 3, 15)
-w = 2 * np.pi
-T = w / (2 * np.pi)
-delta = .001
-deltas = epsilon / 1000
-taus = np.linspace(0,1,num=1000) 
-
-
-for i,eps in enumerate(epsilon):
-    phase_errs = []
-    for tau in taus:
-        phase_errs.append(phase_approx_err(w, tau, eps, phi_0, deltas[i]))
+if (plot_spaced_rad_perts):
+    phi_0 = 0
+    epsilon = np.linspace(.001 , 3, 15)
+    w = 2 * np.pi
+    T = w / (2 * np.pi)
+    delta = .001
+    deltas = epsilon / 1000
+    taus = np.linspace(0,1,num=1000) 
     
-    plt.figure("phase approximation error")
-    plt.plot((taus/T), phase_errs,label='$\epsilon = %.3f$'%eps)
+    
+    for i,eps in enumerate(epsilon):
+        phase_errs = []
+        for tau in taus:
+            phase_errs.append(phase_approx_err(w, tau, eps, phi_0, deltas[i]))
+        
+        plt.figure("phase approximation error")
+        plt.plot((taus/T), phase_errs,label='$\epsilon = %.3f$'%eps)
+    
+    plt.xlabel(r"$\frac{\tau}{T}$")
+    plt.ylabel('Phase Approximation Error')
+    plt.title(r'Phase Approximation Error for two pulses spaced by$ \tau. $')
+    plt.legend()
 
-plt.xlabel(r"$\frac{\tau}{T}$")
-plt.ylabel('Phase Approximation Error')
-plt.title(r'Phase Approximation Error for two pulses spaced by$ \tau. $')
-plt.legend()
-plt.show()
+
+
+taus = np.linspace(3, 5, num = 20)
+lat_phases_actual = []
+for tau in taus:
+    tp = aha.spaced_radial_perturbations(limit_cycle, sim, tau, epsilon, delta)
+    lat_phases_actual.append( aha.get_latent_phase(sim, tp['X'][:,-1], delta, limit_cycle)[0])
+plt.plot(taus, lat_phases_actual)  
+
+
+
+
+
 print("Simulation Complete.")
 plt.show()
 
