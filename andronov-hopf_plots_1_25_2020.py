@@ -2,7 +2,9 @@
 # exploration & plotting of analytic results form andronov-hopf oscillator
  
 ### TODO:
-## Simulate & compute voltage approximation error vs phi/ epsilon
+## compute phase approximation error for two x perturbations spaced out by tau
+## done in theory ^^ next do in simulation!
+
 
  
 import numpy as np
@@ -158,7 +160,7 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
             approx_data['X'],
             self.trajectory_difference(pert_data['X'], approx_data['X'], errfunc),
             lc_conv_idx
-            )
+            ) 
 #endregion            
         
         
@@ -172,11 +174,20 @@ def ttc(eps, delta):
     return 1/2 * np.log(np.divide(num * coeff , denom ))
 
 
-def r_t(eps, t):
+def r_t(eps, ts):
     '''
     Radius as function of time for radial
     perturbation epsilon
     '''
+    
+    # first make sure ts is iterable
+    
+    try:
+        _  =  [t for t in ts]
+    except TypeError:
+        ts = [ts]
+        
+    
     return np.asarray([
         np.exp(t) / np.sqrt( 1/(1+eps)**2 + np.exp(2*t)-1)
           for t in ts])
@@ -220,6 +231,22 @@ def cart_to_polar(xs, ys):
     rs = np.sqrt(np.square(xs) + np.square(ys))
     thetas = np.arctan2(ys, xs)
     return (rs, thetas)
+
+def phase_approx_err(w, tau, epsilon, phi_0, delta):
+    ''' 
+    Compute the approximation error in phase for two epsilon pertrubations
+    in the x direction spaced apart by time tau with the first occurring in 
+    phase phi_0. 
+    '''
+    term_approx = epsilon 
+    term_err = np.abs(1 - r_t(epsilon, tau))
+     
+    err_time = np.abs(ttc(term_approx, delta) - ttc(term_err + term_approx, delta))
+    
+    
+    return w * err_time
+    
+    
 #endregion 
     
     
@@ -250,7 +277,7 @@ plot_traj_perturbations    = 0   # Numerically simulate a given perturbation alo
 
 plot_conv_analysis         = 0   # Simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase/phi
 
-plot_approx_err_voltage    = 1   # Given a point, compute its latent-approximated & actual trajectories and plot error along voltage axis
+plot_approx_err_voltage    = 0   # Given a point, compute its latent-approximated & actual trajectories and plot error along voltage axis
 
 #endregion
  
@@ -552,6 +579,28 @@ if (plot_approx_err_voltage):
     plt.legend()
  
 
+phi_0 = 0
+epsilon = np.linspace(.001 , 3, 15)
+w = 2 * np.pi
+T = w / (2 * np.pi)
+delta = .001
+deltas = epsilon / 1000
+taus = np.linspace(0,1,num=1000) 
+
+
+for i,eps in enumerate(epsilon):
+    phase_errs = []
+    for tau in taus:
+        phase_errs.append(phase_approx_err(w, tau, eps, phi_0, deltas[i]))
+    
+    plt.figure("phase approximation error")
+    plt.plot((taus/T), phase_errs,label='$\epsilon = %.3f$'%eps)
+
+plt.xlabel(r"$\frac{\tau}{T}$")
+plt.ylabel('Phase Approximation Error')
+plt.title(r'Phase Approximation Error for two pulses spaced by$ \tau. $')
+plt.legend()
+plt.show()
 print("Simulation Complete.")
 plt.show()
 
