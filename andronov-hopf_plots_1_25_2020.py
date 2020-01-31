@@ -623,20 +623,20 @@ if (plot_conv_analysis):
 
 
 if (plot_isochron_phase_space):
-    res = 100
-    xc = np.linspace(-2, 2, num = res)
-    yc = np.linspace(-2, 2, num = res)
-    
-    phi_lats = np.zeros((res, res))
-    
-    for i, x in enumerate(xc):
-        for j,y in enumerate(yc):
-        
-            phi_lats[i,j] = aha.get_latent_phase(sim, (x,y), delta, limit_cycle, rads=True)[0]
-
-    plt.imshow(phi_lats)
-    plt.scatter(limit_cycle['X'][0,:],limit_cycle['X'][1,:])
-    plt.colorbar()
+#     res = 100
+#     xc = np.linspace(-2, 2, num = res)
+#     yc = np.linspace(-2, 2, num = res)
+#     
+#     phi_lats = np.zeros((res, res))
+#     
+#     for i, x in enumerate(xc):
+#         for j,y in enumerate(yc):
+#         
+#             phi_lats[i,j] = aha.get_latent_phase(sim, (x,y), delta, limit_cycle, rads=True)[0]
+# 
+#     plt.imshow(phi_lats)
+#     plt.scatter(limit_cycle['X'][0,:],limit_cycle['X'][1,:])
+#     plt.colorbar()
 
 if (plot_approx_err_voltage):
     
