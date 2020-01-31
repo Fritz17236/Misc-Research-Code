@@ -39,7 +39,7 @@ class DynamicalSystemSim(ABC):
         self.dt = dt
   
     
-    def run_sim(self):
+    def run_sim(self, event):
         '''
         Run the numerical integration & return the simulation data structure.
         Generally implemented as scipy RK45 solver.
@@ -52,7 +52,8 @@ class DynamicalSystemSim(ABC):
             self.X0,  # Initial State
             t_eval = np.arange(self.t0, self.T, self.dt),  # Returned evaluation time points
             method='LSODA',  #Radau solver for stiff systems
-            dense_output=True
+            dense_output=True,
+            events = event
             )
         
         sim_data = {}

@@ -8,10 +8,11 @@
 
 
  
-import numpy as np
+import numpy as  np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import Simulation_Analysis_Toolset as sat
+from scipy.integrate import solve_ivp
 
 
 class AndronovHopfSim(sat.DynamicalSystemSim):    
@@ -21,10 +22,11 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
     Starting coordinates should always be given in cartesian coordinates,
     although internally it computes derivative via polar coordinates 
     '''
-    def __init__(self, X0, T, dt, t0 = 0, w = 1):
+    def __init__(self, X0, T, dt, delta=.001, t0=0, w=1):
         
         super().__init__(X0, T, dt, t0)    
         self.w = w
+        self.delta = delta
         
 
     def deriv(self, t, X):
@@ -43,28 +45,66 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
             t0 = self.t0,
             dt = self.dt,
             w = self.w,
+            delta = self.delta
             )
 
         
     def run_sim(self):
+        def is_converged(t, X):
+            '''
+            Check if state X is converged to limit cycle.
+            '''
+
+            
+            if np.less_equal(np.abs(X[0] - 1),self.delta):
+                return 0
+            else:
+                return 1
+            
         #convert cart to polar
         r = self.X0[0]
         phi =  self.X0[1]
         x,y = cart_to_polar(r, phi)
         self.X0 = np.asarray([x,y])
-    
+        
+        
+        
         #run sim
-        data =  super().run_sim()
+        sim_data =  solve_ivp(
+            self.deriv,   # Derivative function
+            (self.t0, self.T),       # Total time interval
+            self.X0,  # Initial State
+            t_eval = np.arange(self.t0, self.T, self.dt),  # Returned evaluation time points
+            method='LSODA',  #Radau solver for stiff systems
+            dense_output=True,
+            events = is_converged,
+            rtol = 1e-15,
+            atol = 1e-15
+            )
+        
+        data = {}
+        
+        for param in self.__dict__.keys():
+            data[str(param)] = self.__dict__[param]
+        
+        
+        data['X'] = sim_data.y
+        data['t'] = sim_data.t
         data["w"] = self.w
         data['r'] = data['X'][0,:]
         data['phi'] = data['X'][1,:]
         self.X0 = np.asarray([r, phi])
+        data['conv_time'] = sim_data.t_events[0][0]
+#        data['conv_phase'] = data['y_events'][0]
         
         # convert polar to cart
         xs, ys = polar_to_cart(data['X'][0,:], data['X'][1,:])
         data['X'][0,:] = xs
         data['X'][1,:] = ys
+        
   
+  
+    
         return data
 
     
@@ -296,13 +336,14 @@ plt.rcParams['figure.dpi'] = 200
 epsilon = 1  # perturbation strength
 
 epsilons = np.logspace(-2, 1, num = 30)
+epsilons = np.linspace(.01, 10, num = 100)
 r0   = 1 + epsilon  #radial perturbation by epsilon
 phi0 = 1
 w = 2 * np.pi 
 period = 2 * np. pi / w
 x0, y0 = polar_to_cart(r0, phi0)
-T = 10
-dt = .001
+T = 20
+dt = .01
 delta = epsilon * 10**-3
 deltas = epsilons * 10**-3
 
@@ -313,11 +354,13 @@ run_test_suite             = 0   # Run the various test functions
 
 plot_trajectory            = 0   # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation including nullclines
 
-plot_limit_cycle           = 1   # Assuming at least 2 full periods of oscillation, compute & plot the limit cycle trajectory
+plot_limit_cycle           = 0   # Assuming at least 2 full periods of oscillation, compute & plot the limit cycle trajectory
 
 plot_traj_perturbations    = 0   # Numerically simulate a given perturbation along given points of a limit cycle
 
-plot_conv_analysis         = 0   # Simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase/phi
+plot_conv_analysis         = 1   # Simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase/phi
+
+plot_isochron_phase_space  = 0   # Tile the phase space and compute the latent phase for each point, plot
 
 plot_approx_err_voltage    = 0   # Given a point, compute its latent-approximated & actual trajectories and plot error along voltage axis
 
@@ -326,7 +369,7 @@ plot_spaced_rad_perts      = 0   # Perturb radially along the limit cycle by eps
  
 
 
-sim = AndronovHopfSim(X0 = np.asarray([x0, y0]), T = T, dt = dt, w = 2*np.pi / period)
+sim = AndronovHopfSim(X0 = np.asarray([x0, y0]), delta = delta,  T = T, dt = dt, w = 2*np.pi / period)
 aha = AndronovHopfAnalyzer()
 data = sim.run_sim()
 limit_cycle = aha.get_limit_cycle(data)
@@ -338,8 +381,8 @@ ts = data['t']
 r_exacts = r_t(epsilon, ts)
 phi_exacts = data['w']*ts 
 
-x_exacts = r_exacts * np.cos(phi_exacts)
-y_exacts = r_exacts * np.sin(phi_exacts) 
+x_exacts = r_exacts * np.cos(phi_exacts + phi0) 
+y_exacts = r_exacts * np.sin(phi_exacts + phi0) 
 
 
 
@@ -363,7 +406,7 @@ if (plot_trajectory):
     plt.plot(ts,xs,label='Simulated')
     plt.plot(ts,x_exacts,'--',label='Analytic')
     plt.xlabel("t")
-    plt.ylabel("X-axis (Voltage) value")
+    plt.ylabel("X-axis value")
     plt.title("X-axis (Voltage) Trace")
     plt.legend()
     
@@ -412,6 +455,7 @@ if (plot_traj_perturbations):
     plt.ylabel('Y')
     plt.title('Perturbations Along Radial Axis')
   
+  
        
 if (plot_conv_analysis):
     print("Plotting convergence analysis (sweeping phi)...")
@@ -428,11 +472,8 @@ if (plot_conv_analysis):
     print('Computing Convergences...')
     for i, idx in enumerate(idxs):
         print('%i/%i'%(i+1, len(idxs)))
-        # compute ttc of trajectory
 
-        conv_idx = aha.traj_idx_of_lc_convergence(limit_cycle, pert_datas[str(idx)]['X'], delta)
-        ttcs.append(pert_datas[str(idx)]['t'][conv_idx])
-        
+        ttcs.append(pert_datas[str(idx)]['conv_time'])
         
         
     plt.figure("ttc_vs_phi")
@@ -441,7 +482,7 @@ if (plot_conv_analysis):
     
     plt.xlabel("$\phi_{0}$")
     plt.ylabel("Time to convergence")
-    plt.title("Time to convergenc e versus (radial) perturbation phase. $\epsilon = %.2f$, $\delta$ = $ \epsilon/1000$"%epsilon)
+    plt.title("Time to convergence versus (radial) perturbation phase. $\epsilon = %.2f$, $\delta$ = $ \epsilon/1000$"%epsilon)
     plt.legend()
     
     
@@ -463,8 +504,9 @@ if (plot_conv_analysis):
         print("%i/%i"%(i+1, len(epsilons)))
         pert_sim = sim.copy_sim()
         pert_sim.X0 = np.asarray([1 + eps, 0]) # perturb radially at phi = 0
+        pert_sim.delta = deltas[i]
         pert_data = pert_sim.run_sim()
-        ttcs_numeric.append(pert_data['t'][aha.traj_idx_of_lc_convergence(limit_cycle, pert_data['X'], deltas[i])])
+        ttcs_numeric.append(pert_data['conv_time'])
         ttcs_exact.append(ttc(eps, deltas[i]))
     
     #plot and compare to analytic ttc
@@ -578,6 +620,23 @@ if (plot_conv_analysis):
 
 #endregion
 
+
+
+if (plot_isochron_phase_space):
+    res = 100
+    xc = np.linspace(-2, 2, num = res)
+    yc = np.linspace(-2, 2, num = res)
+    
+    phi_lats = np.zeros((res, res))
+    
+    for i, x in enumerate(xc):
+        for j,y in enumerate(yc):
+        
+            phi_lats[i,j] = aha.get_latent_phase(sim, (x,y), delta, limit_cycle, rads=True)[0]
+
+    plt.imshow(phi_lats)
+    plt.scatter(limit_cycle['X'][0,:],limit_cycle['X'][1,:])
+    plt.colorbar()
 
 if (plot_approx_err_voltage):
     
