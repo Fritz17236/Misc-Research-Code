@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import Simulation_Analysis_Toolset as sat
 from scipy.integrate import solve_ivp
-
+from math import isclose
 
 class AndronovHopfSim(sat.DynamicalSystemSim):    
     ''' 
@@ -56,7 +56,7 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
             '''
 
             
-            if np.less_equal(np.abs(X[0] - 1),self.delta):
+            if isclose(np.abs(X[0] - 1),0, rel_tol=0, abs_tol = self.delta):
                 return 0
             else:
                 return 1
@@ -78,8 +78,8 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
             method='LSODA',  #Radau solver for stiff systems
             dense_output=True,
             events = is_converged,
-            rtol = 1e-15,
-            atol = 1e-15
+            rtol = 10*np.finfo(float).eps,
+            atol = np.finfo(float).eps
             )
         
         data = {}
@@ -156,7 +156,7 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
         return latent_phase, traj_conv_idx, lc_conv_idx, pert_ttc, pert_sim
     
     
-    def get_latent_phase(self, sim, X, delta, limit_cycle, rads = False): 
+    def get_latent_phase(self, sim, X, limit_cycle, rads = False): 
         ''' 
         Given a point X in the phase plane, compute its latent phase according to the
         simulation sim.
@@ -164,15 +164,29 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
         to the intersection of the trajectory starting at X with the limit cycle
         Also returns time to convergence.
         '''
-    
-        (
-            latent_phase,
-            traj_conv_idx,
-            lc_conv_idx,
-            pert_ttc,
-            pert_sim
-               ) = self.helper_latent_phase(sim, X, limit_cycle, delta, rads)
+        # simulate a new trajectory at x and report its ttc
+#         (
+#             latent_phase,
+#             traj_conv_idx,
+#             lc_conv_idx,
+#             pert_ttc,
+#             pert_sim
+#                ) = self.helper_latent_phase(sim, X, limit_cycle, delta, rads)
+        pert_data = sim.same_sim_at_point(X).run_sim()
 
+        ttc = pert_data['conv_time']
+        
+        T = aha.lc_period(limit_cycle)
+        
+        conv_phase = np.mod(ttc / T, T)
+        
+        if rads:
+            conv_phase = conv_phase * 2 * np.pi
+            
+        else:
+            latent_phase = conv_phase -  ttc / T
+            
+        #w * ttc + phi_lat = phi_conv
         return (latent_phase, pert_ttc) 
     
         
@@ -244,9 +258,9 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
         
 def ttc(eps, delta):
     ''' time to convergence as function of perturbation along radial axis'''
-    num = -(1+2*delta+np.square(delta))
+    num = (1+2*delta+np.square(delta))
     denom = 2*delta+np.square(delta)
-    coeff = 1/np.square(1+eps) - 1 
+    coeff = 1 - 1/np.square(1+eps) 
     return 1/2 * np.log(np.divide(num * coeff , denom ))
 
 
@@ -333,10 +347,12 @@ plt.rcParams['figure.figsize'] = [8, 4.5]
 plt.rcParams['figure.dpi'] = 200
 
 
+print("Machine epsilon for the following simulations is ", np.finfo(float).eps)
+
 epsilon = 1  # perturbation strength
 
-epsilons = np.logspace(-2, 1, num = 30)
-epsilons = np.linspace(.01, 10, num = 100)
+#epsilons = np.logspace(-2, 1, num = 100)
+epsilons = np.linspace(.001, 10, num = 200)
 r0   = 1 + epsilon  #radial perturbation by epsilon
 phi0 = 1
 w = 2 * np.pi 
@@ -356,9 +372,9 @@ plot_trajectory            = 0   # Plot the (x,y) and (t,x), (t,y) trajectories 
 
 plot_limit_cycle           = 0   # Assuming at least 2 full periods of oscillation, compute & plot the limit cycle trajectory
 
-plot_traj_perturbations    = 0   # Numerically simulate a given perturbation along given points of a limit cycle
+plot_traj_perturbations    = 1   # Numerically simulate a given perturbation along given points of a limit cycle
 
-plot_conv_analysis         = 1   # Simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase/phi
+plot_conv_analysis         = 0   # Simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase/phi
 
 plot_isochron_phase_space  = 0   # Tile the phase space and compute the latent phase for each point, plot
 
@@ -439,7 +455,7 @@ if (plot_traj_perturbations):
 
 
     # given indices, perturb them along an eigenvector and plot the convergence results
-    idxs = np.linspace(0, len(limit_cycle['t'])-1,num = 100, dtype = int )
+    idxs = np.linspace(0, len(limit_cycle['t'])-1,num = 3, dtype = int )
     # add an (x,y) component for each perturbation
     # for each point, compute (x,y), scale by 1 + epsilon that u
     us = (1 + epsilon) * limit_cycle['X']
@@ -511,14 +527,14 @@ if (plot_conv_analysis):
     
     #plot and compare to analytic ttc
     plt.figure("ttcs_vs_epsilon")
-    plt.plot(epsilons, ttcs_numeric / aha.lc_period(limit_cycle), label= 'Simulated')
-    plt.plot(epsilons, np.asarray(ttcs_exact) / period ,label= 'Analytic')
+    plt.plot((epsilons), ttcs_numeric / aha.lc_period(limit_cycle), label= 'Simulated')
+    plt.plot((epsilons), np.asarray(ttcs_exact) / period ,label= 'Analytic')
     plt.xlabel("$\epsilon$")
-    plt.ylabel("Time to convergence (fractions of period)")
-    plt.title("Time to convergence versus (radial) perturbation strength. $\phi_0 = 0$, $\delta$ = $ \epsilon/1000$")
+    plt.ylabel("$t^*$")
+    plt.title("Time to convergence versus (radial) perturbation strength. $\delta$ = $ \epsilon/1000$")
     plt.legend()
     
-    #plt.savefig('ttc_vs_perturbation_strength_delta_frac.png',bbox_inches = 'tight')
+    plt.savefig('ttc_vs_perturbation_strength_delta_frac.png',bbox_inches = 'tight')
      
         
 #endregion 
@@ -623,6 +639,7 @@ if (plot_conv_analysis):
 
 
 if (plot_isochron_phase_space):
+    pass
 #     res = 100
 #     xc = np.linspace(-2, 2, num = res)
 #     yc = np.linspace(-2, 2, num = res)
