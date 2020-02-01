@@ -14,6 +14,7 @@ import matplotlib.cm as cm
 import Simulation_Analysis_Toolset as sat
 from scipy.integrate import solve_ivp
 from math import isclose
+from numpy import vectorize
 
 class AndronovHopfSim(sat.DynamicalSystemSim):    
     ''' 
@@ -61,13 +62,13 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
             else:
                 return 1
             
-        #convert cart to polar
-        r = self.X0[0]
-        phi =  self.X0[1]
-        x,y = cart_to_polar(r, phi)
-        self.X0 = np.asarray([x,y])
+        #convert cart to polar, assuming 
+        x0 = self.X0[0]
+        y0 =  self.X0[1]
+        r,phi = cart_to_polar(x0, y0)
+        self.X0 = np.asarray([r,phi])
         
-        
+        is_converged.terminal = True
         
         #run sim
         sim_data =  solve_ivp(
@@ -79,7 +80,7 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
             dense_output=True,
             events = is_converged,
             rtol = 10*np.finfo(float).eps,
-            atol = np.finfo(float).eps
+            atol = np.finfo(float).eps,
             )
         
         data = {}
@@ -93,18 +94,15 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
         data["w"] = self.w
         data['r'] = data['X'][0,:]
         data['phi'] = data['X'][1,:]
-        self.X0 = np.asarray([r, phi])
+        self.X0 = np.asarray([x0, y0])
         data['conv_time'] = sim_data.t_events[0][0]
-#        data['conv_phase'] = data['y_events'][0]
+
         
         # convert polar to cart
         xs, ys = polar_to_cart(data['X'][0,:], data['X'][1,:])
         data['X'][0,:] = xs
         data['X'][1,:] = ys
-        
-  
-  
-    
+
         return data
 
     
@@ -164,30 +162,24 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
         to the intersection of the trajectory starting at X with the limit cycle
         Also returns time to convergence.
         '''
-        # simulate a new trajectory at x and report its ttc
-#         (
-#             latent_phase,
-#             traj_conv_idx,
-#             lc_conv_idx,
-#             pert_ttc,
-#             pert_sim
-#                ) = self.helper_latent_phase(sim, X, limit_cycle, delta, rads)
+        
         pert_data = sim.same_sim_at_point(X).run_sim()
-
-        ttc = pert_data['conv_time']
+        conv_time = pert_data['conv_time']
         
+        #another limit cycle oscillator starting at phi_0 return
         T = aha.lc_period(limit_cycle)
+        w = pert_data['w']
         
-        conv_phase = np.mod(ttc / T, T)
+        #convergence phase is initial phase plus omega t
+        conv_phase = pert_data['phi'][0] + w * conv_time
         
-        if rads:
-            conv_phase = conv_phase * 2 * np.pi
-            
-        else:
-            latent_phase = conv_phase -  ttc / T
-            
+        latent_phase = conv_phase - w * conv_time
+        
+        if not rads:
+            latent_phase = latent_phase / (2 * np.pi)
+  
         #w * ttc + phi_lat = phi_conv
-        return (latent_phase, pert_ttc) 
+        return (latent_phase, conv_time) 
     
         
     def get_latent_error_trajectory(self, sim, limit_cycle, X, errfunc): 
@@ -349,30 +341,30 @@ plt.rcParams['figure.dpi'] = 200
 
 print("Machine epsilon for the following simulations is ", np.finfo(float).eps)
 
-epsilon = 1  # perturbation strength
+epsilon = .1  # perturbation strength
 
 #epsilons = np.logspace(-2, 1, num = 100)
-epsilons = np.linspace(.001, 10, num = 200)
+epsilons = np.linspace(.001, 10, num = 50)
 r0   = 1 + epsilon  #radial perturbation by epsilon
 phi0 = 1
 w = 2 * np.pi 
 period = 2 * np. pi / w
 x0, y0 = polar_to_cart(r0, phi0)
 T = 20
-dt = .01
+dt = .001
 delta = epsilon * 10**-3
 deltas = epsilons * 10**-3
 
 
 # Data Analysis & Plotting Configuration 
 
-run_test_suite             = 0   # Run the various test functions
+run_test_suite             = 1   # Run the various test functions
 
 plot_trajectory            = 0   # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation including nullclines
 
 plot_limit_cycle           = 0   # Assuming at least 2 full periods of oscillation, compute & plot the limit cycle trajectory
 
-plot_traj_perturbations    = 1   # Numerically simulate a given perturbation along given points of a limit cycle
+plot_traj_perturbations    = 0   # Numerically simulate a given perturbation along given points of a limit cycle
 
 plot_conv_analysis         = 0   # Simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase/phi
 
@@ -435,6 +427,7 @@ if (plot_trajectory):
     plt.legend()
     
 
+
 if (plot_limit_cycle):
     print('Plotting limit cycle ... ')
 
@@ -474,44 +467,33 @@ if (plot_traj_perturbations):
   
        
 if (plot_conv_analysis):
-    print("Plotting convergence analysis (sweeping phi)...")
+    print("Plotting convergence analysis (sweeping delta)...")
     
     idxs = np.linspace(0, len(limit_cycle['t'])-1,num = 10, dtype = int )
-    # add an (x,y) component for each perturbation
-    # for each point, compute (x,y), scale by 1 + epsilon that u
-    us = (1 + epsilon) * limit_cycle['X']
-    pert_datas = aha.perturb_limit_cycle(sim, limit_cycle, us, idxs)
+    d_sweep = np.logspace(-9,np.log(np.max(epsilon)),num = 100)
+    ttcs_numeric = []
+    ttcs_exact = []
     
-    phases = aha.lc_times_to_phases(limit_cycle, False)
-    ttcs = []
+    for i,d in enumerate(d_sweep):
+        print("%i/%i"%(i+1, len(d_sweep)))
+        pert_sim = sim.copy_sim()
+        pert_sim.X0 = np.asarray([1 + epsilon, 0]) # perturb radially at phi = 0
+        pert_sim.delta = d
+        pert_data = pert_sim.run_sim()
+        ttcs_numeric.append(pert_data['conv_time'])
+        ttcs_exact.append(ttc(epsilon, d))
     
-    print('Computing Convergences...')
-    for i, idx in enumerate(idxs):
-        print('%i/%i'%(i+1, len(idxs)))
-
-        ttcs.append(pert_datas[str(idx)]['conv_time'])
-        
-        
-    plt.figure("ttc_vs_phi")
-    plt.plot(phases[idxs], ttcs/aha.lc_period(limit_cycle), label='Simulated')
-    plt.axhline(ttc(epsilon, delta)/aha.lc_period(limit_cycle),label='Analytic')
-    
-    plt.xlabel("$\phi_{0}$")
-    plt.ylabel("Time to convergence")
-    plt.title("Time to convergence versus (radial) perturbation phase. $\epsilon = %.2f$, $\delta$ = $ \epsilon/1000$"%epsilon)
+    plt.figure("delta sweep")
+    plt.semilogx((d_sweep)/epsilon, np.asarray(ttcs_numeric) / period, label= 'Simulated')
+    plt.semilogx((d_sweep)/epsilon, np.asarray(ttcs_exact) / period,label= 'Analytic')
+    plt.xlabel(r"$\frac{\delta}{\epsilon}$")
+    plt.ylabel(r"$\frac{t^*}{T}$")
+    plt.title("Time to convergence versus convergence limit, $\epsilon = %.2f$"%epsilon)
     plt.legend()
-    
-    
-    
 
     print("Plotting convergence analysis (sweeping epsilon)...")
-    
+    plt.savefig('ttc_vs_perturbation_strength_delta_frac.png',bbox_inches = 'tight')
 
-        
-    # perturb along radial axis, compute ttc, sweep phase and phi
-    
-
-    #deltas = np.ones(len(epsilons)) * delta
     ttcs_numeric = []
     ttcs_exact = []
     
@@ -534,7 +516,7 @@ if (plot_conv_analysis):
     plt.title("Time to convergence versus (radial) perturbation strength. $\delta$ = $ \epsilon/1000$")
     plt.legend()
     
-    plt.savefig('ttc_vs_perturbation_strength_delta_frac.png',bbox_inches = 'tight')
+    #plt.savefig('ttc_vs_perturbation_strength_delta_frac.png',bbox_inches = 'tight')
      
         
 #endregion 
@@ -639,21 +621,26 @@ if (plot_conv_analysis):
 
 
 if (plot_isochron_phase_space):
-    pass
-#     res = 100
-#     xc = np.linspace(-2, 2, num = res)
-#     yc = np.linspace(-2, 2, num = res)
-#     
-#     phi_lats = np.zeros((res, res))
-#     
-#     for i, x in enumerate(xc):
-#         for j,y in enumerate(yc):
-#         
-#             phi_lats[i,j] = aha.get_latent_phase(sim, (x,y), delta, limit_cycle, rads=True)[0]
-# 
-#     plt.imshow(phi_lats)
-#     plt.scatter(limit_cycle['X'][0,:],limit_cycle['X'][1,:])
-#     plt.colorbar()
+    
+    res = 100
+    xc = np.linspace(-2, 2, num = res)
+    yc = np.linspace(-2, 2, num = res)
+     
+    phi_lats = np.zeros((res, res))
+    count = 1
+    for i, x in enumerate(xc):
+        
+        for j,y in enumerate(yc):
+            print('%i/%i'%(count, res**2))
+            count += 1
+            X = np.asarray([x,y])
+            phi_lats[i,j] = aha.get_latent_phase(sim, [x,y], limit_cycle, rads = True)[0]
+ 
+    plt.imshow(phi_lats)
+    plt.scatter(limit_cycle['X'][0,:],limit_cycle['X'][1,:])
+    plt.colorbar()
+
+
 
 if (plot_approx_err_voltage):
     
@@ -695,6 +682,7 @@ if (plot_approx_err_voltage):
     plt.xlabel('Time')
     plt.ylabel("Voltage")
     plt.legend()
+
  
 
 if (plot_spaced_rad_perts):
@@ -737,17 +725,15 @@ if (plot_spaced_rad_perts):
 
 def test_get_latent_phase(sim): 
     
-    
     aha = AndronovHopfAnalyzer()
     data = sim.run_sim()
     limit_cycle = aha.get_limit_cycle(data)
  
-    
     lat_phases = []
     pert_phis = np.linspace(0.00,2*np.pi, num = 100) 
     for phi in pert_phis:
         x0, y0 = polar_to_cart(r0, phi)
-        lat_phases.append(aha.get_latent_phase(sim, np.asarray([x0, y0]), delta, limit_cycle, rads=True)[0])
+        lat_phases.append(aha.get_latent_phase(sim, np.asarray([x0, y0]), limit_cycle, rads=True)[0])
         
         
     # plot pert phase,
@@ -755,8 +741,8 @@ def test_get_latent_phase(sim):
     plt.figure("test latent phase")
     plt.title('Latent Phase test: should be straight line')
     plt.xlabel('$\phi_0$')
-    plt.ylabel('Latent Phase')
-    plt.scatter(pert_phis, np.mod(lat_phases,2*np.pi),s = 3,label='test result')
+    plt.ylabel('Latent Pdhase')
+    plt.scatter(pert_phis, lat_phases ,s = 3,label='test result')
     plt.plot(pert_phis,pert_phis,'--',c = 'red', label='correct result')
     plt.legend()
     
