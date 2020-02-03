@@ -170,7 +170,7 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
         of where we are on the phase plane. 
         '''
         
-        pert_data = sim.same_sim_at_point(X).run_sim()
+         pert_data = sim.same_sim_at_point(X).run_sim()
         conv_time = pert_data['conv_time']
         
         #another limit cycle oscillator starting at phi_0 return
@@ -341,6 +341,7 @@ def cart_to_polar(xs, ys):
 #     
 #   
 
+
 def phase_approx_err(eps, w, tau):
     '''
     
@@ -386,13 +387,13 @@ plot_traj_perturbations    = 0   # Numerically simulate a given perturbation alo
 
 plot_conv_analysis         = 0   # Simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase/phi
 
-plot_isochron_phase_space  = 0   # Tile the phase space and compute the latent phase for each point, plot
+plot_isochron_phase_space  = 1   # Tile the phase space and compute the latent phase for each point, plot
 
 plot_approx_err_voltage    = 0   # Given a point, compute its latent-approximated & actual trajectories and plot error along voltage axis
 
 plot_spaced_rad_perts      = 0   # Perturb radially along the limit cycle by epsilon twice space by tau time units, compute phase approximation error
 
-plot_approx_err_phase      = 1   # Perturb along x axis time tau apart and compute the phase approximation error
+plot_approx_err_phase      = 0   # Perturb along x axis time tau apart and compute the phase approximation error
  
 plot_approx_err_phase_tau = 0
 #endregion
@@ -663,8 +664,8 @@ if (plot_isochron_phase_space):
             pert_sim.delta = delta_pert
             pert_data = pert_sim.run_sim()
             X = np.asarray([x,y])
-            latent_phase = aha.get_latent_phase(pert_sim, [x,y], rads = True)[0] 
-            phi_lats[i,j] = latent_phase
+            latent_phase = aha.get_latent_phase(pert_sim, X, rads = True)[0] 
+            phi_lats[j,i] = latent_phase
          
     
     xs,ys = np.meshgrid(xc, yc)
@@ -675,8 +676,13 @@ if (plot_isochron_phase_space):
 # 
     fig = plt.figure("lat_phase_sweep")
     plt.scatter(xs,ys, c=phi_lats/(2*np.pi), cmap='magma',s = 5)
-    plt.colorbar()
-    plt.plot(limit_cycle['X'][0,:],limit_cycle['X'][1,:])
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.title('Numerically Evaluated Latent Phase')
+    cbar = plt.colorbar(label='Latent Phase (Normalized)')
+    plt.clim(0, 1)
+    plt.plot(limit_cycle['X'][0,:],limit_cycle['X'][1,:],label='Limit Cycle')
+    plt.savefig('isochron_hopf_numerical.png',bbox_inches='tight')
 
 
 
