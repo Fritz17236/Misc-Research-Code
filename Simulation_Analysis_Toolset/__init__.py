@@ -100,6 +100,11 @@ class OscillatorySimAnalyzer(ABC):
     contain stable limit cycles. (Oscillatory behavior)
     '''
     
+    def __init__(self, data):
+        ''' Initiate with a data object'''
+        self.data = data
+    
+    
     def perturb_limit_cycle(self, sim, limit_cycle, u, indices):
         '''
         Given sim data, and a set of points of the limit cycle, perturb each limit_cycle[i] by
@@ -255,7 +260,51 @@ class OscillatorySimAnalyzer(ABC):
             return data0, clip_idx
         else:
             return data0
+    
+    
+    def plot(self, data, mode = 'plot', fig_name = None, **kwargs):
+        '''
+        Plot the 2-D data given 
+        a 2 x N vector. Additional arguments are passed to the plot function.
+        mode specifies the type of plot e.g. plt.[mode] is called so is plot
+        default but may also be scatter, etc. 
+        '''
         
+        data = np.asarray(data)
+        
+        xs = data[0,:]
+        ys = data[1,:]
+        
+        plt.figure(fig_name)
+        
+
+    
+        if 'xlabel' in kwargs.keys():
+            plt.xlabel(kwargs['xlabel'])
+            kwargs.pop('xlabel')
+            
+        if 'ylabel' in kwargs.keys():
+            plt.ylabel(kwargs['ylabel'])
+            kwargs.pop('ylabel')    
+        
+        if 'title' in kwargs.keys():
+            plt.title(kwargs['title'])
+            kwargs.pop('title')
+        
+        if mode == 'plot':
+            plt.plot(xs, ys, **kwargs)
+            
+        
+        elif mode == 'scatter':
+            plt.scatter(xs, ys, **kwargs)
+        
+        if 'label' in kwargs.keys():
+            plt.legend()
+                
+        if 'c' in kwargs.keys() or 'color' in kwargs.keys():
+            plt.colorbar()
+            
+    
     ## Abstract methods need implementation by subclass    
     @abstractmethod
     def get_limit_cycle(self, sim_data):
@@ -319,7 +368,13 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
     ''' 
     Analysis for Planar (2-dimensional) limit cycles.
     Implements OscillatorySimAnalyzer abstract class.
+    Also features plotting functions
     '''
+    
+    def __init__(self, data):
+        super().__init__(data)
+        self.limit_cycle = self.get_limit_cycle(self.data)
+    
     
     def get_limit_cycle(self, sim_data):
         ''' 
@@ -389,12 +444,58 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
     
         return min_dist
 
-    
-        
-        
-        
-        
 
-                
+    def plot_phase_space(self):
+        ''' Plot the trajectory of the associated data in state space'''
+        print('Plotting phase space... ')
+
+        self.plot(
+            self.data['X'],
+            fig_name = 'trajectory',
+            xlabel = 'x',
+            ylabel = 'y',
+            label = 'Simulated')    
+        
+        self.plot(
+            [self.data['t'], self.data['X'][0,:]],
+            'plot','x_trace',
+            label = 'Simulated',
+            xlabel='t',
+            ylabel='x',
+            title='X-axis Trace')
+
+        self.plot(
+            [self.data['t'], self.data['X'][1,:]],
+            'plot',
+            'y_trace',
+            label = 'Simulated',
+            xlabel='t',
+            ylabel='y',
+            title='Y-axis Trace')
+     
+        
+    def plot_limit_cycle(self):
+        ''' Plot the limit cycle as a separate phase plot '''
+        print('Plotting limit cycle ... ')
+    
+        self.plot(
+            self.limit_cycle['X'],
+            'plot',
+            'limit cycle',
+            xlabel='x',
+            ylabel='y',
+            label='Simulated',
+            title='Limit Cycle Phase Portrait')
+        
+        
+    
+    
+    
+    
+    
+    
+    
+    
+    
     
     
