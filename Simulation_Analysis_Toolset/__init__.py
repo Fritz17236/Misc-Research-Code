@@ -373,7 +373,10 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
     
     def __init__(self, data):
         super().__init__(data)
-        self.limit_cycle = self.get_limit_cycle(self.data)
+        try:
+            self.limit_cycle = self.get_limit_cycle(self.data)
+        except:
+            print("Warning: limit cycle not successfully computed")
     
     
     def get_limit_cycle(self, sim_data):
@@ -393,7 +396,8 @@ class PlanarLimitCycleAnalyzer(OscillatorySimAnalyzer):
         extrema, _ = find_peaks(xs)
         
         if len(extrema) < 2:
-            raise Exception("Only 1 maximum detected in trajectory - run simulation longer?")
+            print ("Warning: Only 1 maximum detected in trajectory. No limit cycle returned. - run simulation longer?")
+            return None
         
         # this gives us a period of oscillation, return the state for times in this period
         idxs = np.arange(extrema[-2],extrema[-1])

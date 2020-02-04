@@ -18,6 +18,7 @@ from math import isclose
 from numpy import vectorize
 from mpl_toolkits.mplot3d import Axes3D
 from basic_units import radians
+import copy
  
 class AndronovHopfSim(sat.DynamicalSystemSim):    
     ''' 
@@ -26,11 +27,12 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
     Starting coordinates should always be given in cartesian coordinates,
     although internally it computes derivative via polar coordinates 
     '''
-    def __init__(self, X0, T, dt, delta=.001, t0=0, w=1):
+    def __init__(self, X0, T, dt, delta=.001, t0=0, w=1, term_con = False):
         
         super().__init__(X0, T, dt, t0)    
         self.w = w
         self.delta = delta
+        self.terminate_at_convergence = term_con
         
 
     def deriv(self, t, X):
@@ -49,7 +51,8 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
             t0 = self.t0,
             dt = self.dt,
             w = self.w,
-            delta = self.delta
+            delta = self.delta,
+            term_con = self.terminate_at_convergence
             )
 
         
@@ -71,7 +74,8 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
         r,phi = cart_to_polar(x0, y0)
         self.X0 = np.asarray([r,phi])
         
-        is_converged.terminal = True
+        if self.terminate_at_convergence:
+            is_converged.terminal = True
         
         #run sim
         sim_data =  solve_ivp(
@@ -82,7 +86,7 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
             method='LSODA',  #Radau solver for stiff systems
             dense_output=True,
             events = is_converged,
-            rtol = 10*np.finfo(float).eps,
+            rtol = 100*np.finfo(float).eps,
             atol = np.finfo(float).eps,
             )
         
@@ -92,10 +96,16 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
             data[str(param)] = self.__dict__[param]
         
         
-        data['X'] = sim_data.y
+        
+        
+        
+        data['X'] = copy.deepcopy(sim_data.y)
         data['t'] = sim_data.t
         data["w"] = self.w
-        self.X0 = np.asarray([x0, y0])
+        
+        data['phis'] = sim_data.y[1,:]
+        data['rs'] = sim_data.y[0,:]
+        
         
         
 
@@ -104,9 +114,14 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
         xs, ys = polar_to_cart(data['X'][0,:], data['X'][1,:])
         data['X'][0,:] = xs
         data['X'][1,:] = ys
-        
-        data['conv_time'] = sim_data.t_events[0][0]
-        data['conv_phase'] = cart_to_polar(data['X'][0,-1], data['X'][1,-1])[1]
+        self.X0 = np.asarray([x0, y0])
+        try:
+            data['conv_time'] = sim_data.t_events[0][0]
+            data['conv_phase'] = cart_to_polar(data['X'][0,-1], data['X'][1,-1])[1]
+            
+        except IndexError:
+            data['conv_time'] = None
+            data['conv_phase'] = None
 
         return data
 
@@ -255,7 +270,13 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
 
         return twice_pert_data, clip_idx, t_conv
         
+    def concat_data_traj(self, data0, data1, get_clip_idx=False):
+        concat =  sat.PlanarLimitCycleAnalyzer.concat_data_traj(self, data0, data1, get_clip_idx=get_clip_idx)
+        concat['phis'] = np.append(concat['phis'], data1['phis'])
+        concat['rs'] = np.append(concat['rs'], data1['rs'] )
         
+        return concat
+    
 def ttc(eps, delta):
     ''' time to convergence as function of perturbation along radial axis'''
     num = (1+2*delta+np.square(delta))
@@ -867,17 +888,22 @@ if plot_approx_err_phase:
   
 #periodic perturbations
 
+
 def two_pert_pulse(sim, X, t0,  t_pulse, epsilon, tau):
     ''' 
     Starting at a point X, apply radial perturbation 
     epsilon, then wait tau units and apply an angular pulse eps/r(t). Then simulate
     until t_pulse time has elapsed. 
     '''
-    #given an initital point/time (X, t0), perturb by r an amouint epsilon, simulate to tau
-    X = data['X'][:-1]
-    X[0] += epsilon #perturb radially by epsilon
+    #given an initial point/time (X, t0), perturb by r an amount epsilon, simulate to tau
+    
+
+    r0, phi0 = cart_to_polar(X[0], X[1])
+    r0 += epsilon
+    x, y = polar_to_cart(r0, phi0)
     first_pert_sim = sim.same_sim_at_point(X)
-    first_pert_sim.t0 = data['t'][-1]
+    first_pert_sim.X0 = np.asarray([x, y])
+    first_pert_sim.t0 = t0
     first_pert_sim.T = tau+t0
     fp_data = first_pert_sim.run_sim()
     
@@ -885,32 +911,103 @@ def two_pert_pulse(sim, X, t0,  t_pulse, epsilon, tau):
     #create a new simulation with initial state at t=tau and X[tau]. perturb angular by eps/r,
     # run to t_pulse+t0
     sec_pert_sim = sim.same_sim_at_point(fp_data['X'][:,-1])
-    sec_pert_sim.X0[1] += ( epsilon / sec_pert_sim.X0[0])
-    sec_pert_sim.t0 = tau
+    
+    r_tau = fp_data['rs'][-1]
+    phi_tau = fp_data['phis'][-1] 
+    phi_tau += np.abs(epsilon / r_tau)
+        
+    x_pert, y_pert = polar_to_cart(r_tau, phi_tau)
+    
+    sec_pert_sim.X0 = np.asarray([x_pert, y_pert])
+    sec_pert_sim.t0 = t0 + tau
     sec_pert_sim.T = t0 + t_pulse
     sp_data = sec_pert_sim.run_sim()
     
     return aha.concat_data_traj(fp_data, sp_data)
     
-t_pulse = 5
-epsilon = .5
-tau = .5
-    
-tp_data = two_pert_pulse(sim, data, t_pulse, epsilon, tau)
 
-aha.plot(tp_data['X'], 'plot', 'two perturbations')
-
-def two_pert_sequence(sim, t_pulse, epsilon, tau, num_pulses):
+def two_pert_pulse_sequence(sim, t_pulse, epsilon, tau, num_pulses, lc_approx):
     '''
     Apply a 2 pert pulse sequence for num_pulses, combining
     trajectories after each pulse occurs. 
     '''
-    pass
-#start at limit cycle
-# perturb r by epsilon, 
-# perturb phi by epsilon/r
-# wait until T_pulse has passed 
-# repeat for k pulses
+    
+    X = np.asarray([1, 0]) #phi(0) = 0, r(0) = 1
+    t0 = 0
+    w = sim.w
+    phis = []
+    phi0 = 0
+    ts = []
+    p_data = {}
+    if lc_approx:
+        for i in np.arange(num_pulses):
+            
+            t = np.arange(t0, t0 + tau, sim.dt)
+            phis = np.concatenate((phis, w * t + phi0))
+            ts = np.concatenate((ts, t))
+            rem_ts = np.arange(t0 + tau, t0 + t_pulse , sim.dt)
+            phis = np.concatenate((phis, w * rem_ts + phi0 + i*epsilon))
+            t0 += t_pulse 
+            ts = np.concatenate((ts, rem_ts))
+            #phi0 =
+        p_data['phis'] = phis
+        p_data['t'] = ts
+        p_data['X'] = np.empty((2,len(ts)))
+        tpa = AndronovHopfAnalyzer(p_data)
+        
+        
+    else:
+        p_data = two_pert_pulse(sim, X, t0, t_pulse, epsilon, tau)
+        tpa = AndronovHopfAnalyzer(p_data)
+        count = 1
+        while count < num_pulses:
+            X0 = p_data['X'][:,-1]
+            t0 = p_data['t'][-1] + sim.dt
+            phi_prog_so_far = p_data['phis'][-1]
+            next_data = two_pert_pulse(sim, X0, t0, t_pulse, epsilon, tau)
+            p_data = tpa.concat_data_traj(p_data, next_data)
+            count += 1
+            
+    
+    return tpa, p_data
+
+
+def two_pert_comparison(sim, t_pulse, epsilon, tau, num_pulses):
+    '''
+    Compute perturbation sequence trajectories & plot their comparisons
+    '''
+    pta, pt_data = two_pert_pulse_sequence(sim, t_pulse, epsilon, tau, num_pulses, False)
+    paa, pa_data = two_pert_pulse_sequence(sim, t_pulse, epsilon, tau, num_pulses, True)
+    
+  #  pta.plot_phase_space()
+  #  paa.plot_phase_space()
+    
+    phase_err = np.abs( -np.unwrap(pt_data['phis']) + np.unwrap(pa_data['phis'])
+         )
+
+    labels = ['True Phase', 'Approximated Phase']
+    for i, dat in enumerate([pt_data, pa_data]):
+        
+        plt.figure("phase_trace")
+        plt.plot(dat['t'], np.mod(dat['phis'], 2 * np.pi), label=labels[i])
+        
+    plt.figure('phase_trace')
+    plt.plot(pt_data['t'], phase_err, label='Phase Error')
+         
+    plt.xlabel('t')
+    plt.ylabel(r'$\phi$')
+    plt.title('Perturbed limit cycle vs true phase')
+    plt.legend()
+    
+
+t_pulse = 5
+epsilon = .5
+tau = .5
+num_pulses = 3
+    
+two_pert_comparison(sim, t_pulse, epsilon, tau, num_pulses)
+        
+
 
 
  
