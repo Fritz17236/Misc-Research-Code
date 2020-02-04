@@ -170,7 +170,7 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
         of where we are on the phase plane. 
         '''
         
-         pert_data = sim.same_sim_at_point(X).run_sim()
+        pert_data = sim.same_sim_at_point(X).run_sim()
         conv_time = pert_data['conv_time']
         
         #another limit cycle oscillator starting at phi_0 return
@@ -347,7 +347,7 @@ def phase_approx_err(eps, w, tau):
     
     '''
     r_tau = r_t(eps, tau)
-    return np.abs(eps * (1 - r_tau))
+    return np.abs(eps * (1 - r_tau**-1))
     
 
 
@@ -387,15 +387,20 @@ plot_traj_perturbations    = 0   # Numerically simulate a given perturbation alo
 
 plot_conv_analysis         = 0   # Simulate given perturbation for chosen indices & compute their distance to limit cycle vs phase/phi
 
-plot_isochron_phase_space  = 1   # Tile the phase space and compute the latent phase for each point, plot
+plot_isochron_phase_space  = 0   # Tile the phase space and compute the latent phase for each point, plot
 
 plot_approx_err_voltage    = 0   # Given a point, compute its latent-approximated & actual trajectories and plot error along voltage axis
 
 plot_spaced_rad_perts      = 0   # Perturb radially along the limit cycle by epsilon twice space by tau time units, compute phase approximation error
 
-plot_approx_err_phase      = 0   # Perturb along x axis time tau apart and compute the phase approximation error
+plot_approx_err_phase      = 0   # comment here  
  
-plot_approx_err_phase_tau = 0
+plot_approx_err_phase_tau  = 0   # comment here
+
+
+
+
+
 #endregion
  
 
@@ -793,9 +798,9 @@ def test_get_latent_phase(sim):
 
     
 if plot_approx_err_phase_tau:
-    res = 300
-    eps = np.linspace(0, .1, num = res)
-    taus = np.linspace(0,1,num=res)
+    res = 100
+    eps = np.logspace(-5, 0, num = res)
+    taus = np.logspace(-3,0,num=res)
     
     w_approx_err = (2 * np.pi)*(2)
     
@@ -810,16 +815,25 @@ if plot_approx_err_phase_tau:
             
     plt.figure("eps vs tau")
     xs, ys = np.meshgrid(eps, taus)
-    ax = plt.gca()
-    plt.scatter(xs, ys, c=errs/(2*np.pi),
-   #             norm=mpl.colors.LogNorm(vmin=10**-6),
-                 s = 5)
+    #ax = plt.gca()
+    ax = plt.axes(projection='3d')
+    
+    rel_err = errs / (2 * np.pi)
+    my_col = cm.get_cmap('viridis', res**2)
+    #inferno(rel_err/np.amax(rel_rr))
+    ax.plot_surface(xs, ys,  rel_err, cmap= my_col,
+                  #   norm=mpl.colors.LogNorm(vmin=10**-8,vmax=.1)
+                     )
     #ax.set_yscale('log')
     #ax.set_xscale('log')
     plt.xlabel('$\epsilon$')
     plt.ylabel(r'$\tau$')
-
-    plt.colorbar()
+    ax.set_zlabel(r'$\psi_{err}$')
+    ax.view_init(azim=140 )
+    plt.title('Phase Approximation Error for 2 Perturbations')
+    plt.savefig('2_pert.png')
+  #  plt.colorbar()
+  #  plt.clim(vmin = 10**-6, vmax = 3)
 
 
 
@@ -849,7 +863,58 @@ if plot_approx_err_phase:
     plt.ylabel(r'$r$')
 
     plt.colorbar()   
+ 
+  
+#periodic perturbations
+
+def two_pert_pulse(sim, X, t0,  t_pulse, epsilon, tau):
+    ''' 
+    Starting at a point X, apply radial perturbation 
+    epsilon, then wait tau units and apply an angular pulse eps/r(t). Then simulate
+    until t_pulse time has elapsed. 
+    '''
+    #given an initital point/time (X, t0), perturb by r an amouint epsilon, simulate to tau
+    X = data['X'][:-1]
+    X[0] += epsilon #perturb radially by epsilon
+    first_pert_sim = sim.same_sim_at_point(X)
+    first_pert_sim.t0 = data['t'][-1]
+    first_pert_sim.T = tau+t0
+    fp_data = first_pert_sim.run_sim()
     
+    
+    #create a new simulation with initial state at t=tau and X[tau]. perturb angular by eps/r,
+    # run to t_pulse+t0
+    sec_pert_sim = sim.same_sim_at_point(fp_data['X'][:,-1])
+    sec_pert_sim.X0[1] += ( epsilon / sec_pert_sim.X0[0])
+    sec_pert_sim.t0 = tau
+    sec_pert_sim.T = t0 + t_pulse
+    sp_data = sec_pert_sim.run_sim()
+    
+    return aha.concat_data_traj(fp_data, sp_data)
+    
+t_pulse = 5
+epsilon = .5
+tau = .5
+    
+tp_data = two_pert_pulse(sim, data, t_pulse, epsilon, tau)
+
+aha.plot(tp_data['X'], 'plot', 'two perturbations')
+
+def two_pert_sequence(sim, t_pulse, epsilon, tau, num_pulses):
+    '''
+    Apply a 2 pert pulse sequence for num_pulses, combining
+    trajectories after each pulse occurs. 
+    '''
+    pass
+#start at limit cycle
+# perturb r by epsilon, 
+# perturb phi by epsilon/r
+# wait until T_pulse has passed 
+# repeat for k pulses
+
+
+ 
+ 
     
     
 if (run_test_suite):
