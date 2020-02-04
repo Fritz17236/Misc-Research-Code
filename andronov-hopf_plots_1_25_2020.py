@@ -82,7 +82,7 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
             self.deriv,   # Derivative function
             (self.t0, self.T),       # Total time interval
             self.X0,  # Initial State
-            t_eval = np.arange(self.t0, self.T, self.dt),  # Returned evaluation time points
+            t_eval = np.linspace(self.t0, self.T, int((self.T-self.t0)/self.dt)),  # Returned evaluation time points
             method='LSODA',  #Radau solver for stiff systems
             dense_output=True,
             events = is_converged,
@@ -269,6 +269,7 @@ class AndronovHopfAnalyzer(sat.PlanarLimitCycleAnalyzer):
         t_conv = twice_pert_data['t'][aha.traj_idx_of_lc_convergence(limit_cycle, twice_pert_data['X'], delta)]  
 
         return twice_pert_data, clip_idx, t_conv
+     
         
     def concat_data_traj(self, data0, data1, get_clip_idx=False):
         concat =  sat.PlanarLimitCycleAnalyzer.concat_data_traj(self, data0, data1, get_clip_idx=get_clip_idx)
@@ -337,11 +338,12 @@ def polar_to_cart(rs, thetas):
     return (xs, ys)
 
 
-def cart_to_polar(xs, ys):
+def cart_to_polar(xs, ys, k_mod = int(0)):
     ''' convert cartesian coords to polar '''
+    assert(type(k_mod) is int),  "k_mod should be an integer type"
     rs = np.sqrt(np.square(xs) + np.square(ys))
     thetas = np.arctan2(ys, xs)
-    return (rs, thetas)
+    return (rs, thetas + 2 * np.pi * k_mod)
 
 
 # def phase_approx_err(w, tau, epsilon, phi_0, delta):
@@ -915,13 +917,14 @@ def two_pert_pulse(sim, X, t0,  t_pulse, epsilon, tau):
     r_tau = fp_data['rs'][-1]
     phi_tau = fp_data['phis'][-1] 
     phi_tau += np.abs(epsilon / r_tau)
-        
+    k_mod = np.floor(phi_tau / (np.pi))
     x_pert, y_pert = polar_to_cart(r_tau, phi_tau)
     
     sec_pert_sim.X0 = np.asarray([x_pert, y_pert])
     sec_pert_sim.t0 = t0 + tau
     sec_pert_sim.T = t0 + t_pulse
     sp_data = sec_pert_sim.run_sim()
+    sp_data['phis'] += 2 * np.pi * k_mod
     
     return aha.concat_data_traj(fp_data, sp_data)
     
@@ -951,7 +954,7 @@ def two_pert_pulse_sequence(sim, t_pulse, epsilon, tau, num_pulses, lc_approx):
             phi0 += epsilon
             #phi1 = perturb
             #integrate from tau to t_pulse starting at phi1
-            rem_ts = np.arange(tau, t0 + t_pulse, dt)
+            rem_ts = np.arange(t0 + tau, t0 + t_pulse, dt)
             ts = np.concatenate((ts, rem_ts))
             pulse_phis = np.concatenate((pulse_phis, w*rem_ts + phi0))
             
@@ -970,9 +973,11 @@ def two_pert_pulse_sequence(sim, t_pulse, epsilon, tau, num_pulses, lc_approx):
         count = 1
         while count < num_pulses:
             X0 = p_data['X'][:,-1]
-            t0 = p_data['t'][-1] + sim.dt
-            phi_prog_so_far = p_data['phis'][-1]
+            t0 = p_data['t'][-1] 
+            
+            
             next_data = two_pert_pulse(sim, X0, t0, t_pulse, epsilon, tau)
+            next_data['phis'] += p_data['phis'][-1] - np.mod(p_data['phis'][-1], 2 * np.pi) # stich together keeping phase progress 
             p_data = tpa.concat_data_traj(p_data, next_data)
             count += 1
             
@@ -997,21 +1002,29 @@ def two_pert_comparison(sim, t_pulse, epsilon, tau, num_pulses):
     for i, dat in enumerate([pt_data, pa_data]):
         
         plt.figure("phase_trace")
-        plt.plot(dat['t'], np.mod(dat['phis'], 2 * np.pi), label=labels[i])
+        plt.plot(dat['t'], np.sin(np.mod(dat['phis'], 2 * np.pi)), label=labels[i])
         
-    plt.figure('phase_trace')
+    for i in np.arange(num_pulses):
+        if i == 0:
+            plt.axvline(tau + i*t_pulse,ls='--',alpha=.5, c = 'red', label='Pulse Times')
+        else:
+            plt.axvline(tau + i*t_pulse,ls='--',alpha=.5, c = 'red')
+    fig = plt.figure('phase_trace')
+    #ax = plt.gca()
+    #ax2 = ax.twinx()
+    #ax2.plot(pt_data['t'], phase_err, label='Phase Error')
     plt.plot(pt_data['t'], phase_err, label='Phase Error')
-         
-    plt.xlabel('t')
-    plt.ylabel(r'$\phi$')
-    plt.title('Perturbed limit cycle vs true phase')
-    plt.legend()
     
+    plt.xlabel('t')
+    plt.ylabel(r'sin($\phi$)')
+    plt.title('Approximation Error for Repeated Pulse Sequences')
+    plt.legend()
+    plt.savefig('repeated_pulse_sequence_approx_err.png',bbox_inches='tight')
 
-t_pulse = 5
+t_pulse = 1
 epsilon = .5
 tau = .5
-num_pulses = 3
+num_pulses = 10
     
 two_pert_comparison(sim, t_pulse, epsilon, tau, num_pulses)
         
