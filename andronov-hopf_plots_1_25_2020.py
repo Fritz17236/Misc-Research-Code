@@ -941,15 +941,23 @@ def two_pert_pulse_sequence(sim, t_pulse, epsilon, tau, num_pulses, lc_approx):
     p_data = {}
     if lc_approx:
         for i in np.arange(num_pulses):
-            
-            t = np.arange(t0, t0 + tau, sim.dt)
-            phis = np.concatenate((phis, w * t + phi0))
-            ts = np.concatenate((ts, t))
-            rem_ts = np.arange(t0 + tau, t0 + t_pulse , sim.dt)
-            phis = np.concatenate((phis, w * rem_ts + phi0 + i*epsilon))
-            t0 += t_pulse 
+            #integrate  to tau starting at phi0
+            pulse_phis = []
+
+            t = np.arange(t0, t0 + tau, dt)
+            ts = np.concatenate((ts, t ),0)
+            pulse_phis = np.concatenate((pulse_phis, w*t + phi0))
+            #perturb by epsilon
+            phi0 += epsilon
+            #phi1 = perturb
+            #integrate from tau to t_pulse starting at phi1
+            rem_ts = np.arange(tau, t0 + t_pulse, dt)
             ts = np.concatenate((ts, rem_ts))
-            #phi0 =
+            pulse_phis = np.concatenate((pulse_phis, w*rem_ts + phi0))
+            
+            t0 += t_pulse
+            phis = np.concatenate((phis, pulse_phis))
+   
         p_data['phis'] = phis
         p_data['t'] = ts
         p_data['X'] = np.empty((2,len(ts)))
