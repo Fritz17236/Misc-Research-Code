@@ -41,8 +41,28 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
         dr/dt = r - r^3
         dphi/dt = 1 
         '''
-        return np.asarray([X[0]-X[0]**3, self.w])
+        
+        dX  = np.asarray([X[0]-X[0]**3, self.w])
+        
+        if   hasattr(self, 'rand_r_eps'):
+            if len(self.rand_r_perts) == 0:
+                self.populate_rand_r_eps()
+                
+            #dr = self.rand_r_perts.pop(0)
+            #dX[0] += np.random.choice([-1, 1])
+                
+            
+            
+        return dX
 
+    def populate_rand_r_eps(self):
+        '''
+        Fill the random perturbation array self.rand_r_eps
+        '''
+        self.rand_r_perts = np.random.choice([-self.rand_r_eps, self.rand_r_eps],size = (int((self.T-self.t0)/self.dt)),p = [.1, .9])
+        self.rand_r_perts = [p for p in self.rand_r_perts] 
+        
+        
     
     def copy_sim(self):
         return AndronovHopfSim(
@@ -68,11 +88,20 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
             else:
                 return 1
             
+            
+            
+        
         #convert cart to polar, assuming 
         x0 = self.X0[0]
         y0 =  self.X0[1]
         r,phi = cart_to_polar(x0, y0)
         self.X0 = np.asarray([r,phi])
+        
+        #if random r perts preallocate based on number of eval points
+        if hasattr(self, 'rand_r_eps'):
+            self.populate_rand_r_eps()
+
+        
         
         if self.terminate_at_convergence:
             is_converged.terminal = True
@@ -84,10 +113,10 @@ class AndronovHopfSim(sat.DynamicalSystemSim):
             self.X0,  # Initial State
             t_eval = np.linspace(self.t0, self.T, int((self.T-self.t0)/self.dt)),  # Returned evaluation time points
             method='LSODA',  #Radau solver for stiff systems
-            dense_output=True,
+            dense_output=False,
             events = is_converged,
-            rtol = 100*np.finfo(float).eps,
-            atol = np.finfo(float).eps,
+            #rtol = 100*np.finfo(float).eps,
+            #atol = 10**4*np.finfo(float).eps,
             )
         
         data = {}
@@ -383,7 +412,7 @@ plt.rcParams['figure.dpi'] = 200
 
 print("Machine epsilon for the following simulations is ", np.finfo(float).eps)
 
-epsilon = .1  # perturbation strength
+epsilon = .001  # perturbation strength
 
 #epsilons = np.logspace(-2, 1, num = 100)
 epsilons = np.linspace(.001, 10, num = 100)
@@ -392,7 +421,7 @@ phi0 = 1
 w = 2 * np.pi 
 period = 2 * np. pi / w
 x0, y0 = polar_to_cart(r0, phi0)
-T = 20
+T = 10
 dt = .001
 delta = epsilon * 10**-3
 deltas = epsilons * 10**-3
@@ -402,7 +431,7 @@ deltas = epsilons * 10**-3
 
 run_test_suite             = 0   # Run the various test functions
 
-plot_trajectory            = 0   # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation including nullclines
+plot_trajectory            = 1   # Plot the (x,y) and (t,x), (t,y) trajectories of the simulation including nullclines
 
 plot_limit_cycle           = 0   # Assuming at least 2 full periods of oscillation, compute & plot the limit cycle trajectory
 
@@ -429,6 +458,7 @@ plot_approx_err_phase_tau  = 0   # comment here
 
 
 sim = AndronovHopfSim(X0 = np.asarray([x0, y0]), delta = delta,  T = T, dt = dt, w = 2*np.pi / period)
+sim.rand_r_eps = .01
 data = sim.run_sim()
 aha = AndronovHopfAnalyzer(data)
 limit_cycle = aha.get_limit_cycle(data)
@@ -1026,7 +1056,7 @@ epsilon = .5
 tau = .5
 num_pulses = 10
     
-two_pert_comparison(sim, t_pulse, epsilon, tau, num_pulses)
+#two_pert_comparison(sim, t_pulse, epsilon, tau, num_pulses)
         
 
 

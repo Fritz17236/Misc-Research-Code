@@ -84,13 +84,15 @@ class DynamicalSystemSim(ABC):
         '''
         pass    
         
-    @abstractmethod
     def copy_sim(self):
         '''
         Return a simulation with the same parameters
         as the instant
         '''
-        pass
+        new_sim = DynamicalSystemSim()
+        for d in self.__dict__.keys():
+            new_sim.d = self.__dict__[str(d)]
+            
 
     
     
