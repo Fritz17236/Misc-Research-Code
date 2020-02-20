@@ -39,7 +39,7 @@ class DynamicalSystemSim(ABC):
         self.dt = dt
   
     
-    def run_sim(self, event):
+    def run_sim(self, event = None):
         '''
         Run the numerical integration & return the simulation data structure.
         Generally implemented as scipy RK45 solver.
@@ -64,7 +64,7 @@ class DynamicalSystemSim(ABC):
         
         sim_data['X'] = data.y
         sim_data['t'] = data.t
-        
+        sim_data['t_events'] = data.t_events
         
         return sim_data
            
@@ -92,8 +92,74 @@ class DynamicalSystemSim(ABC):
         new_sim = DynamicalSystemSim()
         for d in self.__dict__.keys():
             new_sim.d = self.__dict__[str(d)]
+  
             
+class LinearDynamicalSystem(DynamicalSystemSim):
+    '''
+    A LinearDynamicalSystem (LDS) object instantiates a specified dynamical 
+    system. The user provides a LDS specification via initial arguments. The system begins at 
+    time = 0, and is advanced  by calling the update() method. Any field listed below can be 
+    directly accessed via dot notation.  
+    
+    ---------------- Initial Arguments: ----------------------------------------------------------------------------------------
+    init_state: (M numpy array) - an initial configuration of the dynamical system
+    
+    A: state transition matrix (M x M numpy array) - determines how one state maps to the next 
+    
+    init_input: (L numpy array) - an initial configuration of the input to the dynamical system 
+    
+    B: input matrix ( M x L numpy array ) - maps the dependence of the state on the input vector 
+    
+    dt: time step (miliseconds) - the time elapsed in the dynamical system between successive updates - defaults to 0.001 ms
+        
 
+    --------------- Fields -------------------------------------------------------------------------------------------------------
+    t: (T scalar) the elapsed time of the simulation
+    
+    A: state_transition matrix (see above)
+    
+    B: input matrix (see above)
+    
+    x: (M numpy array ) state vector at current time
+    
+    u: (function handle) input u at time t i.e. def u(t) returns vector 
+
+    
+    '''
+    
+    def __init__(self, init_state, A, init_input, B, u = None, dt = .001, T = 10):
+        '''
+        Initialize the Linear Dynamical System. If there are any defaults, ensure they have appropriate
+        dimensions. 
+        '''
+        X0 = init_state  
+        assert(X0.ndim == 1), "Initial State is expected to be a vector, but has %i dimensions" %self.x.ndim
+        assert(X0.shape[0] == A.shape[0]), ("State vector size (%i) does not match"\
+                                                " Number of State Transition Matrix Rows (%i)" %(self.x.shape[0], A.shape[0]) )
+        self.A = A
+        self.u0 = init_input
+        self.u = u
+        assert(self.u0.ndim == 1), "Initial Input is expected to be a vector, but has %i dimensions" %self.u.ndim
+        self._null_input = np.zeros(self.u0.shape)
+
+    
+        assert(B.shape[0] == A.shape[0]), "Input matrix rows (%i) should match state transition matrix rows (%i)" %(B.shape[0], A.shape[0])
+        assert(B.shape[1] == len(self.u0)), "Input matrix columns (%i) should match length of provided input vector (%i)" %(B.shape[1], self.u.shape[0])
+        self.B = B
+        
+        
+        super().__init__(X0, T, dt)
+
+    def deriv(self, t, x):
+        '''
+        Return the derivative of the state (x-dot) at the current time
+        '''
+        try:
+            return self.A @ x + self.B @ self.u(t)
+        except TypeError:
+            return self.A@x
+    
+    
     
     
 class OscillatorySimAnalyzer(ABC):
