@@ -11,5 +11,6 @@ Code for Various Research-Related Subjects
 ### Simulation_Analysis_Toolset
 - This is a package of various functions used to define and analyze numerical simulations
  of limit-cycle oscillators. 
- 
+### Homeostatic Spiking Framework
+- Computational Models of Spiking Neural Networks 
  
