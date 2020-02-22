@@ -10,6 +10,7 @@ import Simulation_Analysis_Toolset as sat
 import numpy as np
 import matplotlib.pyplot as plt
 from abc import abstractmethod
+from scipy.integrate._ivp.ivp import solve_ivp
 
 
 
@@ -72,10 +73,50 @@ N = 1000
 lam = 1
 D = gen_decoder(len(x0), N)
 
-
-
-
 #net = SpikingNeuralNet(T, dt, N, D, lds, lam)
+
+def run_sim(self, event=None):
+    ts = np.empty((1,))
+    t_events = np.empty((1,))
+    X = np.empty_like(self.X0)
+    X0 = self.X0
+    t0 = self.t0
+    while True:
+        data = solve_ivp(
+            self.deriv, # Derivative function
+            (t0, self.T), # Total time interval
+            X0, # Initial State
+            t_eval=np.arange(t0, self.T, self.dt),  
+            method='LSODA', 
+            dense_output=True, 
+            events=event
+            )
+        X = np.append(X, data.y, axis = 1 )
+        ts = np.append(ts, data.t )
+        #t_events = np.append(data.t_events,axis=1)
+        
+        
+        if event and data.status == 1: # Event was hit
+            # New start time for integration
+            t0 = data.t[-1]
+            # Reset initial state
+            X0 = data.y[:, -1].copy()
+            X0[0] += 1
+        else:
+            break
+        
+    
+
+    sim_data = {}
+#     for param in self.__dict__.keys():
+#         sim_data[str(param)] = self.__dict__[param]
+    
+    sim_data['X'] = X
+    sim_data['t'] = ts
+    sim_data['t_events'] = np.asarray(t_events)
+    return sim_data
+     
+
 
 def event(t, y):
     ''' blah'''
@@ -86,7 +127,13 @@ def event(t, y):
 # event based state updating
 # if event occurs (x > thresh), record event, and move x += delta
 event.direction = 1
-data = lds.run_sim(event)
-plt.plot(data['t'],data['X'][0,:])
-plt.axvline(x = data['t_events'][0][0])
+event.terminal = True
+lds.run_sim = run_sim
+data = lds.run_sim(lds, event)
+
+
+print(data.keys())
+print(data['X'][0].shape)
+#plt.plot(data['t'],data['X'][0,:])
+#plt.axvline(x = data['t_events'][0][0])
 plt.show()
