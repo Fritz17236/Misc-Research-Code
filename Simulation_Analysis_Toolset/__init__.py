@@ -139,7 +139,10 @@ class LinearDynamicalSystem(DynamicalSystemSim):
                                                 " Number of State Transition Matrix Rows (%i)" %(self.x.shape[0], A.shape[0]) )
         self.A = A
         self.u0 = init_input
-        self.u = u
+        if u is None:
+            self.u = lambda t: np.zeros(self.u0.shape) 
+        else:
+            self.u = u
         assert(self.u0.ndim == 1), "Initial Input is expected to be a vector, but has %i dimensions" %self.u.ndim
         self._null_input = np.zeros(self.u0.shape)
 
