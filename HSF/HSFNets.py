@@ -10,11 +10,29 @@ import Simulation_Analysis_Toolset as sat
 import numpy as np
 import matplotlib.pyplot as plt
 from abc import abstractmethod
+from matplotlib import cm 
 from scipy.integrate._ivp.ivp import solve_ivp
-
+import copy
 '''
 Class Definitions
 '''
+
+##bug: pingponging all spikes go simultaneously and lead to exponential growth/error 
+    # try: when a spike occurrs, make a queue and apply the first spike, while there are spikes in queue, spike
+        # maybe mad eit worse
+        
+    # only one psike then skip 
+        # kind of works but wierd sidewise travelling of voltage curves 
+    # use smaller dt 10e-4 instead of 10e-3
+        # meh, no improvement when lower max step 
+    # make max step 10e-3 with dt small
+        # takes too long for too small dt
+        
+    #try: make time added after spike very small (eg 10e-6)
+        # with max step off is horrible
+        # with max step 10e-3 tspan teval error, address:
+            # changed teval but horrible 
+        
 
 class SpikingNeuralNet(sat.DynamicalSystemSim):
     ''' 
@@ -55,9 +73,9 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         X0 = self.X0
         t0 = self.t0
         
-        while t0 < self.T:
+        while t0 < self.T - self.dt:
             print("Simulation Time: %f"%t0)
-            t_eval = np.arange(t0, self.T, step=dt)
+            t_eval = np.linspace(t0, self.T, num =int((self.T-t0)/self.dt))
             data = solve_ivp(
                 self.deriv, # Derivative function
                 (t0, self.T), # Total time interval
@@ -65,10 +83,10 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
                 t_eval = t_eval,
                 method='LSODA', 
                 dense_output=True, 
-                events=self.spike_occurred,
-#                 rel_tol = 10e-10,
-#                 abs_tol = 10e-15,
-                max_step = 10e-6,
+                events=self.spike_occurred(),
+             #   rtol = 10e-10,
+             #   atol = 10e-15,
+                max_step = 10e-3,
                 )
    
             if X is None: 
@@ -80,27 +98,21 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
 
                 X = np.hstack((X, data.y[:,:-2]))
                 ts = np.append(ts, data.t[:-2])
-                t_events = np.append(t_events, data.t_events,axis=1)   
+                t_events = np.append(t_events, data.t_events)   
          
             
             if data.status == 1: # if spike threshold crossed, spike
-                t_spike = data.t_events[0][-1]
+                #find spike in t_events list
+                t_spike = [l[0] for l in data.t_events if len(l) is not 0][0]
                 X0 = data.sol(t_spike).copy()
-                O_t = self.spike_occurred(t_spike, X0, ret_idx=True)
-                self.spike(X0, O_t, t_spike, t0)
-    
-                self.t0s.append(t_spike)
-                t0 = t_spike + self.dt  
+                t0 = self.spike(X0, t_spike, t0)
+                
+                  
                 
             else:
                 
                 t0 = self.T
 
-
-            
- 
-            
-    
         sim_data = {}
         for param in self.__dict__.keys():
             sim_data[str(param)] = self.__dict__[param]
@@ -123,7 +135,7 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         pass
     
     @abstractmethod
-    def spike_occurred(self, t, y, ret_idxs = False):
+    def spike_occurred(self, t, y):
         '''
         Based on State & Time decide whether neuron(s) spikes. 
         Used by root finding algorithm to determine when neuron voltage 
@@ -132,6 +144,12 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         be returned.
         '''
 
+    @abstractmethod
+    def get_spiked_neurons(self, X0):
+        '''
+        Return O(t) which has entries 1 if neuron j should spike at given state
+        '''
+        pass
      
     @abstractmethod
     def spike(self, V, O_t, t):
@@ -160,26 +178,30 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
          
         self.r0s = np.asarray([np.linalg.pinv(D) @ lds.X0]).T
         
-    def spike_occurred(self, t, V, ret_idx = False):
-        '''
-        Find the neuron closest to crossing threshold from below.
-        '''
-        
-        diffs = V - self.vth
-        
-        if ret_idx:
-            #get each neuron at min val 
-            O_t = np.zeros((self.N,))
-            O_t[diffs >= 0] = 1
-            return O_t
-        else:
-            return np.max(diffs)
-        
-        
-        
-    spike_occurred.terminal = True # Set both attributes for use in event-based spike detection
-    spike_occurred.direction = 1
+  
     
+    def spike_occurred_i(self, t, V, i):
+        '''
+        return the difference between neuron i's voltage & threshold
+        threshold here is norm so is alwyas nonnegative 
+        '''
+        
+        return V[i] - self.vth[i]
+        
+
+    
+    def spike_occurred(self):
+        
+        func_list = [] 
+        for i in np.arange(N):
+            func = lambda t, V, j = i: self.spike_occurred_i(t, V, j)
+            func.terminal = True
+            #func.direction = 1
+            func_list.append(func)
+        
+        return func_list
+            
+        
     def deriv(self, t, V):
         ''' 
         \dot{V} = Mv V + Mr r + Mo o + Mc c
@@ -189,10 +211,9 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         r is convolution of impulse response psi with spike raster 
         '''
         
-        return  self.Mv @ V + self.Mr @ self.r(t) + self.Mc @ self.lds.u(t)
+        return  self.Mv @ V + self.Mr @ self.r(t) + self.Mc @ self.lds.u(t)# + np.random.normal((self.N,))
         
         
-    
     def r(self,ts):
         '''
         Compute Post synaptic current/filtered spike train of N neurons at time t.
@@ -221,19 +242,22 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
 
 ##TODO
 #debug: check r0 over time. make it an array
+         
             
-    def spike(self, V, O_t, t, t0):
+    def spike(self, V, t_spike, t0): 
              
-        
-        SpikingNeuralNet.spike(self, V, O_t, t)
-        V += self.Mo @ O_t
-        self.r0s = np.hstack((self.r0s, np.expand_dims(self.r(t-t0) + O_t, axis = 1)))
-        
-        
-        spikes = np.argwhere(O_t == 1)
-        for sp in spikes:
-            self.O[str(sp[0])] = np.append(self.O[str(sp[0])], t)
+        O_t = self.get_spiked_neurons(V)    
+        if np.sum(O_t) > 0: 
+            SpikingNeuralNet.spike(self, V, O_t, t_spike)
+            V += self.Mo @ O_t
+            self.r0s = np.hstack((self.r0s, np.expand_dims(self.r(t_spike-t0) + O_t, axis = 1)))
+            t0 += (10e-4)
+            O_t = self.get_spiked_neurons(V)
+            
+            self.t0s.append(t_spike)
 
+        return t0
+        
         
     def run_sim(self):
         data = SpikingNeuralNet.run_sim(self)
@@ -249,6 +273,14 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         print('Simulation Complete.')
         return data
 
+
+    def get_spiked_neurons(self, X0):
+        '''
+        Return O(t) which has entries 1 if neuron j should spike at given state
+        '''
+    
+        O_t = [1 if np.isclose(X0[i], self.vth[i]) else 0 for i in np.arange(N)]
+        return O_t
 '''
 Helper functions
 '''
@@ -276,15 +308,18 @@ A[1,0] = -1
 B = np.zeros(A.shape)
 u0 = np.zeros(A.shape[0])
 x0 = np.asarray([1, 0])
-T = 10
-dt = .001
+T = 5
+dt = .0001
 lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = None, T = T, dt = dt)
 
 N = 50
-lam = 1
+lam =  dt
 mode = '2d cosine'
 
-D = .1*gen_decoder(len(x0), N,mode)
+cmap = cm.get_cmap('viridis',N)(np.arange(N))
+
+
+D = gen_decoder(len(x0), N,mode)
 
 net = GapJunctionDeneveNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0 = 0)
 
@@ -294,12 +329,17 @@ data = net.run_sim()
 
 # print(np.min(np.diff(data['t'])))
 # print(np.max(np.diff(data['t'])))
-# plt.figure()
-# plt.plot(data['t'], data['x_true'][0,:])
-# 
-# 
 plt.figure()
-plt.plot(data['x_hat'][0,:], data['x_hat'][1,:])
+plt.plot(data['x_true'][0,:])
+plt.plot(data['x_hat'][0,:]) 
+#
+
+idxs = np.arange(0,N, 10) 
+plt.figure()
+for i in idxs:
+    plt.plot(data['t'],data['V'][i,:],c=cmap[i],linewidth=5)
+    plt.axhline(y = net.vth[i],c=cmap[i],ls = '--',linewidth=5)
+#plt.plot(data['x_hat'][0,:], data['x_hat'][1,:])
 # plt.plot(data['x_true'][0,:], data['x_true'][1,:])
 # # 
 # 
@@ -310,7 +350,7 @@ plt.figure()
 for i in np.arange(N):
     if np.max(data['r'][i,:]) > .25:
         plt.plot(data['t'],data['r'][i,:],label='i = %i'%i)
-plt.legend()
+#plt.legend()
 
 
 plt.show()
