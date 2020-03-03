@@ -140,7 +140,7 @@ class LinearDynamicalSystem(DynamicalSystemSim):
         self.A = A
         self.u0 = init_input
         if u is None:
-            self.u = lambda t: np.zeros(self.u0.shape) 
+            self.u = lambda t: np.zeros((B.shape[1],1)) 
         else:
             self.u = u
         assert(self.u0.ndim == 1), "Initial Input is expected to be a vector, but has %i dimensions" %self.u.ndim
@@ -159,10 +159,16 @@ class LinearDynamicalSystem(DynamicalSystemSim):
         Return the derivative of the state (x-dot) at the current time
         '''
         try:
-            return self.A @ x + self.B @ self.u(t)
+            result = (self.A @ x).flatten() + (self.B @ self.u(t)).flatten()
+            assert(result.shape == x.shape), "Derivative Function did not return the proper shape," \
+            "should be %s, but was %s"%(x.shape, result.shape)        
+            return result
+        
         except TypeError:
-            return self.A@x
-    
+            return (self.A@x).flatten()
+        
+
+
     
     
     

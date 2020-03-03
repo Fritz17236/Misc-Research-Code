@@ -92,11 +92,14 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
             dtype = np.double
             )
         
-        self.r  = np.abs(np.asarray([np.linalg.pinv(D) @ lds.X0]).T)
+        self.r  = (np.asarray([np.linalg.pinv(D) @ lds.X0]).T)
         
         
     def V_dot(self):
         u = self.lds.u(self.t[-1])
+        assert((self.Mc@u).shape== self.V[:,-1:].shape), "Scaled input has incorrect shape %s" \
+        " when state is %s"%((self.Mc@u).shape, self.V[:,-1:].shape)
+        
         return self.Mv @ (self.V[:,-1:]) + self.Mr @ (self.r[:,-1:]) + self.Mc @ u
 
 
@@ -109,7 +112,7 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
             
     def spike(self, idx): 
         self.V[:,-1] += self.Mo[:,idx]
-        self.r[idx,-1] += 1 
+        self.r[idx,-1] += 1
         self.O[str(idx)].append(self.t[-1])
         
         
@@ -128,9 +131,15 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
             self.t.append(self.t[-1] + self.dt)
         
         data = {}
-        data['r'] = self.r
-        data['V'] = self.V
-        data['t'] = self.t
+        
+
+        data['r'] = np.asarray(self.r)
+        data['V'] = np.asarray(self.V)
+        data['t'] = np.asarray(self.t)
+        assert(data['r'].shape == data['V'].shape), "r has shape %s but V has shape %s"%(data['r'].shape, data['V'].shape)
+        assert(data['V'].shape[1] == len(data['t'])), "V has shape %s but t has shape %s"%(data['V'].shape, data['t'].shape)
+        
+        
         data['x_hat'] = self.D @ data['r'] 
         true_data = self.lds.run_sim()
         data['x_true'] = true_data['X']
@@ -170,10 +179,11 @@ u0 = np.zeros((A.shape[0]))
 x0 = np.asarray([0, 1])
 
 
-T = 1
-sim_dt = 1e-3
+T = 5
+sim_dt = 1e-4
 lds_dt = .001
-lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = lambda t: 1*np.ones((B.shape[1],1)), T = T, dt = lds_dt)
+#lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = lambda t: 1*np.ones((B.shape[1],1)), T = T, dt = lds_dt)
+lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = None, T = T, dt = lds_dt)
 
 N = 50
 lam =  10
@@ -182,21 +192,21 @@ mode = '2d cosine'
 cmap = cm.get_cmap('viridis',N)(np.arange(N))
 
 
-D = gen_decoder(len(x0), N, mode)
+D = .1*gen_decoder(len(x0), N, mode)
 
 net = GapJunctionDeneveNet(T=T, dt=sim_dt, N=N, D=D, lds=lds, lam=lam, t0 = 0)
 
 data = net.run_sim() 
-meane = np.mean(np.linalg.pinv(D.T)@data['V'],axis=0)    
 
 plt.figure()
-plt.plot(data['t'], data['x_true'][0,:])
-plt.plot(data['t'],  data['x_hat'][0,:])
+plt.plot(data['t_true'], data['x_true'][0,:],label='x')
+plt.plot(data['t'],  data['x_hat'][0,:],label=r'$\hat{x}$')
 plt.title("xhat vs xtrue") 
+plt.legend()
 
  
 plt.figure()
-#plt.plot(data['t'], data['V'][0,:],linewidth=5)
+plt.plot(data['t'], np.mean(data['V'],axis=0),linewidth=5)
 plt.title('mean(V(t))')
   
 plt.figure()
