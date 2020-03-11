@@ -3,9 +3,17 @@
 	<name>HSF</name>
 	<comment></comment>
 	<projects>
+		<project>git_repos</project>
+		<project>Simulation_Analysis_Toolset</project>
 	</projects>
 	<buildSpec>
+		<buildCommand>
+			<name>org.python.pydev.PyDevBuilder</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
 	</buildSpec>
 	<natures>
+		<nature>org.python.pydev.pythonNature</nature>
 	</natures>
 </projectDescription>

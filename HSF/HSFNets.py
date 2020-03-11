@@ -10,8 +10,6 @@ import Simulation_Analysis_Toolset as sat
 import numpy as np
 import matplotlib.pyplot as plt
 from abc import abstractmethod
-from matplotlib import cm 
-from _nsis import err
 '''
 Class Definitions
 '''
@@ -48,6 +46,26 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         sat.DynamicalSystemSim.deriv(self, t, X)
         pass
     
+    
+    def dissonance(self, V):
+        ''' 
+        Given an N-t vector V and decoder matrix D,
+        compute the dissonance.
+        '''
+        n_pts = V.shape[1]
+        N = V.shape[0]
+        D = self.D
+        
+        dtd = np.linalg.pinv(D.T @ D)
+        I = np.eye((N))
+        
+        diss = np.zeros((N,n_pts))
+        for i in np.arange(n_pts):
+            diss[:,i] = (dtd - I) @ V[:,i]
+            
+        return diss
+    
+    
     @abstractmethod  
     def run_sim(self):
         pass
@@ -82,7 +100,7 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         
         #compute voltage eq matrices 
         self.Mv = D.T @ lds.A @ np.linalg.pinv(D.T)
-        self.Mr = D.T @ (lds.A + lam * np.eye(A.shape[0])) @ D
+        self.Mr = D.T @ (lds.A + lam * np.eye(lds.A.shape[0])) @ D
         self.Mo = - D.T @ D
         self.Mc = D.T @ lds.B
         
@@ -137,6 +155,7 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         data['r'] = np.asarray(self.r)
         data['V'] = np.asarray(self.V)
         data['t'] = np.asarray(self.t)
+        data['O'] = self.O
         assert(data['r'].shape == data['V'].shape), "r has shape %s but V has shape %s"%(data['r'].shape, data['V'].shape)
         assert(data['V'].shape[1] == len(data['t'])), "V has shape %s but t has shape %s"%(data['V'].shape, data['t'].shape)
         
@@ -152,40 +171,18 @@ class SpikeDropDeneveNet(GapJunctionDeneveNet):
     def __init__(self, T, dt, N, D, lds, lam, p, t0 = 0):
         super().__init__(T, dt, N, D, lds, lam, t0)
         self.p = p
+        self.readout_mask = np.ones((N,))
         
     def spike(self,idx):
         draw = np.random.binomial(1, self.p, size = (self.N,))
         self.V[:,-1] += np.diag(draw) @ self.Mo[:,idx]
         self.r[idx,-1] += 1
+        self.readout_mask = draw
         self.O[str(idx)].append(self.t[-1])
      
 '''
 Helper functions
 '''
-
- 
-def exp_err(p, D, l):
-    
-    vec = p*(1-p) * np.square(D.T @ D[:,l])
-    sig_v = np.diag(vec)
-    
-    d_dag = np.linalg.pinv(D)
-    sig_e =  d_dag.T @ sig_v @ d_dag
-    return (1- p)**2 + np.trace(sig_e), (1-p)**2, np.trace(sig_e)
-    #return 1 + p * (a - 2) + p**2 * (1 - a)
-
-def dissonance(D, V):
-    ''' given an N-vector V and decoder matrix D, compute the dissonance'''
-    dt_dag = np.linalg.pinv(D.T)
-    n_pts = V.shape[1]
-    N = V.shape[0]
-    diss = np.zeros((n_pts,1))
-    
-    for i in np.arange(n_pts):
-        diss[i,0] = np.linalg.norm( ( D.T @ dt_dag - np.eye(N))@ (V[:,i]) )
-        
-    return diss / np.sqrt(N)
-    
     
 def gen_decoder(d, N, mode='random'):
         '''
@@ -203,113 +200,3 @@ def gen_decoder(d, N, mode='random'):
             D[1,:] = np.sin(thetas)
             
             return D
-      
-      
-run_sim = False
-
-       
-A =  np.zeros((2,2))
-A[0,1] = 1
-A[1,0] = -1
-A =  A
-B = np.eye(2)
-u0 = np.zeros((A.shape[0]))
-x0 = np.asarray([0, 1])
-
-
-T = 10 
-sim_dt = 1e-3
-lds_dt = .001
-p = .9
-#lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = lambda t: 1*np.ones((B.shape[1],1)), T = T, dt = lds_dt)
-lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = None, T = T, dt = lds_dt)
-
-
-plt.close('all')
-Ns = np.asarray([10, 20, 50, 100, 500, 1000, 5000])
-
-N = 50
-lam =  1
-mode = '2d cosine'
-
-cmap = cm.get_cmap('viridis',N)(np.arange(N))
-
-exp_errs = []
-biasq = []
-vars = []
-
-for N in Ns:
-    D = gen_decoder(len(x0), N, mode)
-    
-    err, bsq, var = exp_err(.9, D, 1)
-    exp_errs.append(err)
-    biasq.append(bsq)
-    vars.append(var)
-    
-plt.figure()
-plt.plot(Ns, exp_errs, label='Expected Error')
-plt.plot(Ns, biasq, label= 'Bias Squared')
-plt.plot(Ns, vars, label='Variance (trace of cov matrix)')
-plt.xlabel('Number of Neurons')
-plt.ylabel('Expected Error Norm')
-plt.title("Variance inversely scales with N while Bias constant")
-plt.xscale('log')
-plt.yscale('log')
-plt.legend()
-plt.show()
-
-
-
-ps = np.linspace(0,1, num = 100)
-plt.figure()
-
-exp_errs = []
-biasq = []
-vars = []
-for p in ps:
-    e, bsq, var = exp_err(p, D, 1 ) 
-    exp_errs.append(e)
-    biasq.append(bsq)
-    vars.append(var)
-
-plt.plot(ps,exp_errs,label='expected error')
-plt.plot(ps,biasq,label='bias squared')
-plt.plot(ps,vars,label='variance')
-
-plt.legend()
-
-
-#plt.figure()
-plt.show()
-net = GapJunctionDeneveNet(T=T, dt=sim_dt, N=N, D=D, lds=lds, lam=lam, t0 = 0)
-#net = SpikeDropDeneveNet(T=T, dt=sim_dt, N=N, D=D, lds=lds, lam=lam,p = p, t0 = 0)
-
-
-
-
-if run_sim:
-    data = net.run_sim() 
-    
-    sim_diss = dissonance(D, data['V'])
-    
-    fig, ax1 = plt.subplots()
-    ax2 = ax1.twinx()
-    ax1.plot(data['t_true'], data['x_true'][0,:],label='x')
-    ax1.plot(data['t'],  data['x_hat'][0,:],label=r'$\hat{x}$')
-    ax2.plot(data['t'], sim_diss,label='Dissonance')
-    plt.title("xhat vs xtrue") 
-    plt.legend()
-    
-     
-    plt.figure()
-    plt.plot(data['t'], np.mean(data['V'],axis=0),linewidth=5)
-    plt.title('mean(V(t))')
-      
-    plt.figure()
-    for i in np.arange(N):
-        #if np.max(data['r'][i,:]) > .25:
-        plt.plot(data['t'],data['r'][i,:],label='i = %i'%i)
-    plt.title('r(t)')
-    
-    
-    plt.show()
