@@ -47,28 +47,47 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         pass
     
     
-    def dissonance(self, V):
+    def decoherence(self, V):
         ''' 
         Given an N-t vector V and decoder matrix D,
-        compute the dissonance.
+        compute the decoherence.
         '''
-        n_pts = V.shape[1]
-        N = V.shape[0]
+    
         D = self.D
         
         dtd = np.linalg.pinv(D.T @ D)
-        I = np.eye((N))
+        I = np.eye((V.shape[0]))
         
-        diss = np.zeros((N,n_pts))
-        for i in np.arange(n_pts):
+        diss = np.zeros(V.shape)
+        for i in np.arange(diss.shape[1]):
             diss[:,i] = (dtd - I) @ V[:,i]
             
         return diss
+
     
+    def pack_data(self):
+        ''' Pack simulation data into dict object '''
+        data = {}
+
+        data['r'] = np.asarray(self.r)
+        data['V'] = np.asarray(self.V)
+        data['t'] = np.asarray(self.t)
+        data['O'] = self.O
+        assert(data['r'].shape == data['V'].shape), "r has shape %s but V has shape %s"%(data['r'].shape, data['V'].shape)
+        assert(data['V'].shape[1] == len(data['t'])), "V has shape %s but t has shape %s"%(data['V'].shape, data['t'].shape)
+        
+        data['x_hat'] = self.D @ data['r'] 
+        true_data = self.lds.run_sim()
+        data['x_true'] = true_data['X']
+        data['t_true'] = true_data['t']
+        data['dec'] = self.decoherence(data['V'])
+        
+        return data
     
     @abstractmethod  
     def run_sim(self):
-        pass
+        ''' Return the packed simulation data'''
+        return self.pack_data()
     
     
     @abstractmethod
@@ -91,6 +110,7 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         O_t is a N-vector of 1s (spike at time t) and zeros (no spike)
         '''
         assert( len(O_t) <= self.N)
+
 
 
 class GapJunctionDeneveNet(SpikingNeuralNet):
@@ -139,7 +159,8 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
     def run_sim(self):
         dt = self.dt
         vth = self.vth
-        while self.t[-1] < self.T:
+        count = 0
+        while count < int(np.floor(((self.T - self.t0)/self.dt))) - 1:
             print('Simulation Time: %f' %self.t[-1])
             spiked = self.V[:,-1] > vth
             
@@ -149,22 +170,14 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
             self.r = np.append(self.r, self.r[:,-1:] +  dt * self.r_dot(), axis=1 )
             self.V = np.append(self.V, self.V[:,-1:] +  dt * self.V_dot(), axis=1 )
             self.t.append(self.t[-1] + self.dt)
+            
+            count += 1
         
-        data = {}
-
-        data['r'] = np.asarray(self.r)
-        data['V'] = np.asarray(self.V)
-        data['t'] = np.asarray(self.t)
-        data['O'] = self.O
-        assert(data['r'].shape == data['V'].shape), "r has shape %s but V has shape %s"%(data['r'].shape, data['V'].shape)
-        assert(data['V'].shape[1] == len(data['t'])), "V has shape %s but t has shape %s"%(data['V'].shape, data['t'].shape)
-        
-        data['x_hat'] = self.D @ data['r'] 
-        true_data = self.lds.run_sim()
-        data['x_true'] = true_data['X']
-        data['t_true'] = true_data['t']
         print('Simulation Complete.')
-        return data
+        
+        return super().run_sim()
+
+
 
 
 class SpikeDropDeneveNet(GapJunctionDeneveNet):

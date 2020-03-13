@@ -50,7 +50,7 @@ class DynamicalSystemSim(ABC):
             self.deriv,   # Derivative function
             (self.t0, self.T),       # Total time interval
             self.X0,  # Initial State
-            t_eval = np.arange(self.t0, self.T, self.dt),  # Returned evaluation time points
+            t_eval = np.linspace(self.t0, self.T, num = int(np.floor(((self.T - self.t0)/self.dt)))),  # Returned evaluation time points
             method='LSODA',  #Radau solver for stiff systems
             dense_output=True,
             events = event
@@ -94,6 +94,7 @@ class DynamicalSystemSim(ABC):
             new_sim.d = self.__dict__[str(d)]
   
  
+   
             
 class LinearDynamicalSystem(DynamicalSystemSim):
     '''

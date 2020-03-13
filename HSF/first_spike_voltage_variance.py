@@ -4,7 +4,6 @@ Created on Mar 10, 2020
 @author: fritz
 '''
 from HSFNets import *
-import math
 
 
 run_sim = False
