@@ -197,7 +197,7 @@ class SpikeDropDeneveNet(GapJunctionDeneveNet):
 Helper functions
 '''
     
-def gen_decoder(d, N, mode='random'):
+def gen_decoder(d, N, mode='random'): 
         '''
         Generate a d x N decoder mapping neural activities to 
         state space (X). Only 'random' mode implemented, which
@@ -208,7 +208,7 @@ def gen_decoder(d, N, mode='random'):
         elif mode == '2d cosine':
             assert(d == 2), "2D Cosine Mode is only implemented for d = 2"
             thetas = np.linspace(0, 2 * np.pi, num=N)
-            D = np.zeros((d,N))
+            D = np.zeros((d,N), dtype = np.float64)
             D[0,:] = np.cos(thetas)
             D[1,:] = np.sin(thetas)
             

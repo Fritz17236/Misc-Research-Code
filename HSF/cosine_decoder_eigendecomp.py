@@ -8,21 +8,24 @@ Created on Mar 10, 2020
 Eigendecomposition of Decoder basis in R2 and RN
 @author: fritz
 '''
-from HSFNets import *
+from HSFNets import * 
 import math
 
 
 
 
 
-N = 512
+N = 127
+
 d = 2
 mode = '2d cosine'
 D = gen_decoder(d, N, mode)
 
 dtd = D.T@D
+dt_dag = np.linalg.pinv(D.T)
 
-def fft_mtx(N):
+
+def fft_mtx(N): 
     ''' Create an NxN FFT matrix '''
     F = np.zeros((N,N), dtype = np.complex)
     F_norm = np.zeros(F.shape, dtype = np .complex)
@@ -49,41 +52,109 @@ def fft_mtx(N):
             
     return  F, F_norm
 
+
+def fourier_coeffs(v, k):
+    '''
+    return the kth coefficients for a fourier basis in sine and cosine of a vector v
+    '''
+    ak = 0
+    bk = 0
+    N = len(v)
+    for i in np.arange(N):
+        ak += v[i] * np.cos(2 * np.pi * i * k / N) * 2 / N
+        bk += v[i] * np.sin(2 * np.pi * i * k / N) * 2 / N
+    
+    
+    return (ak, bk)
+    
 s, v = np.linalg.eigh(dtd)
-sort_idxs = np.argsort(-s)
-s = s[sort_idxs]
-v = v[:,sort_idxs]
+s = np.sort(s)
+v = v[:,np.argsort(s)]
 
 
 
-F, F_norm = fft_mtx(N)
-eigdft = np.diag(F.T @ dtd @ F)
-sort_idxs = np.argsort(-eigdft)
-eigdft = eigdft[sort_idxs]
-F_norm = F_norm[:,sort_idxs]
-F = F[:,sort_idxs]
-
-  
-plt.figure()
-plt.plot(np.real(eigdft),label = 'Analytic')
-plt.plot(np.real(s),label='Numeric')
-plt.xscale('log')
-plt.legend()
-plt.title("Eigenvalues of $D^{T}D$")
-plt.xlabel('i')
-plt.ylabel(r'|$\lambda_{i}$|')
 
 
-res = dtd @ F_norm[:,0]
+v_cos = np.asarray([np.cos(2 * np.pi * i * 1 / N) for i in np.arange(N)])
+v_cos = v_cos / np.linalg.norm(v_cos)
+v_sin = np.asarray([np.sin(2 * np.pi * i * 1 / N) for i in np.arange(N)]) 
+v_sin = -v_sin / np.linalg.norm(v_sin)
+
+
+ 
+
 plt.figure()
 plt.xlabel(r'Neuron j')
 plt.ylabel(r'$V_j$')
 plt.title("Eigenvectors of $D^{T}D$")
-plt.plot( v[:,0], label =  r'$Re\left\{v\right\}$ Numeric')
-plt.plot( v[:,1], label =  r'$Img\left\{v\right\}$ Numeric')
-plt.plot( np.real(F_norm[:,0]),'--', label =  r'$Re\left\{v\right\}$ Analytic')
-plt.plot( np.imag(F_norm[:,0]),'--', label =  r'$Img\left\{v\right\}$ Analytic')
+plt.plot( v[:,-1], label =  r'$v_1$ Numeric, $\lambda_1 = %.3f$'%s[-1])
+plt.plot( v[:,-2], label =  r'$v_2$ Numeric, $\lambda_2 = %.3f$'%s[-2])
+plt.plot( v_cos,'--', label =  r'$v_{cos}$ Analytic, a1 = %.3f'%((N+1)/2))
+plt.plot( v_sin,'--', label =  r'$v_{sin}$ Analytic, b1 = %.3f'%((N-1)/2))
 plt.legend()
+
+
+
+
+
+## assert that if we perturb the voltage by error-orthogonalized noise, the error is unchanged
+# init voltage
+v_init = 1*np.ones((N,))
+## init error
+e_init = dt_dag @ v_init
+ 
+
+##add noise
+noise = 100 * np.random.normal(scale = 1, size=(N,))
+
+def ortho_proj(v, k):
+    '''
+    Given a vector V, project each element j of the vector onto the kth complex basis 
+    exp(-1i 2pi  j k /N )
+    '''
+    
+    N = len(v)
+    #proj onto sine cosine bases
+    cos_vec = []
+    sin_vec = []
+    ak, bk = fourier_coeffs(v, k)
+    for i in np.arange(N):
+        cos_vec.append(np.cos(2 * np.pi * i * k / N))
+        sin_vec.append(np.sin(2 * np.pi * i * k / N))
+    
+    return  ( ak * np.asarray(cos_vec) + bk * np.asarray(sin_vec) )
+
+
+noise_ortho =  noise - ortho_proj(noise, 1) 
+
+v_p = v_init + noise
+e_p = dt_dag @ v_p
+
+v_new = v_init + noise_ortho
+e_new = dt_dag @ v_new
+
+
+plt.figure()
+plt.plot(noise, alpha = .5, label = 'Raw Noise')
+plt.plot(noise_ortho,alpha= .5,  label= 'Orthogonalized Noise')
+plt.legend()
+
+
+plt.figure()
+plt.plot(np.arange(N), v_init,alpha = .5, label='Initial Voltage')
+plt.plot(np.arange(N), v_init + noise, alpha = .5, label = 'Raw-Perturbed Voltage')
+plt.plot(np.arange(N), v_new, alpha = .5,  label= 'Ortho-Perturbed Voltage')
+plt.legend()  
+  
+  
+plt.figure()
+plt.scatter(e_init[0], e_init[1],s= 100, marker='x', label= 'original error')
+plt.scatter(e_new[0], e_new[1],s = 100, marker='*',alpha=.5, label= 'ortho noise perturbed error')
+plt.scatter(e_p[0], e_p[1],s = 100, marker='.',alpha=.5, label= 'raw noise-perturbed error')
+plt.xlim([-1.5 * np.min(e_p[0]), 1.5 * np.max(e_p[0])])
+plt.ylim([-1.5 * np.min(e_p[1]), 1.5 * np.max(e_p[1])])
+plt.legend()
+
 
 
 plt.show()
