@@ -32,6 +32,7 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         self.N = N # number of neurons in network
         self.lam = lam #leak term
         self.D = D # Decoder matrix
+        self.suppress_console_output = False
         
         self.O = {}
         for i in np.arange(self.N):
@@ -40,7 +41,10 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         self.V = np.zeros((N,1))
         
         super().__init__(None, T, dt, t0)
-    
+        
+        self.inject_noise = (False, None) # to add voltage noise, set this to (true, func(net)) where func is a handle 
+                                          # and net is this network object 
+
     
     def deriv(self, t, X):
         sat.DynamicalSystemSim.deriv(self, t, X)
@@ -69,6 +73,9 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         ''' Pack simulation data into dict object '''
         data = {}
 
+        for d in self.__dict__:
+            data[str(d)] = self.__dict__[d]
+        
         data['r'] = np.asarray(self.r)
         data['V'] = np.asarray(self.V)
         data['t'] = np.asarray(self.t)
@@ -147,16 +154,20 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         assert((self.Mc@u).shape== self.V[:,-1:].shape), "Scaled input has incorrect shape %s" \
         " when state is %s"%((self.Mc@u).shape, self.V[:,-1:].shape)
         
-        return self.Mv @ (self.V[:,-1:]) + self.Mr @ (self.r[:,-1:]) + self.Mc @ u 
+        if self.inject_noise[0]:
+            noise = self.inject_noise[1](self)
+        else:
+            noise = np.zeros((self.N,1))
+        
+        return self.Mv @ (self.V[:,-1:]) + self.Mr @ (self.r[:,-1:]) + self.Mc @ u + noise 
     
-
 
     def r_dot(self):
         '''
         Compute the post synaptic current
         '''
         return -self.lam * self.r[:,-1:]
-       
+          
             
     def spike(self, idx): 
         self.V[:,-1] += self.Mo[:,idx]
@@ -169,7 +180,8 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         vth = self.vth
         count = 0
         while count < int(np.floor(((self.T - self.t0)/self.dt))) - 1:
-            print('Simulation Time: %f' %self.t[-1])
+            if not self.suppress_console_output:
+                print('Simulation Time: %f' %self.t[-1])
             spiked = self.V[:,-1] > vth
             
             for idx in np.nonzero(spiked)[0]:
@@ -180,8 +192,9 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
             self.t.append(self.t[-1] + self.dt)
             
             count += 1
-        
-        print('Simulation Complete.')
+            
+        if not self.suppress_console_output:
+            print('Simulation Complete.')
         
         return super().run_sim()
 

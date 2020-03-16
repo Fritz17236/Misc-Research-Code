@@ -136,7 +136,8 @@ e_new = dt_dag @ v_new
 
 plt.figure()
 plt.plot(noise, alpha = .5, label = 'Raw Noise')
-plt.plot(noise_ortho,alpha= .5,  label= 'Orthogonalized Noise')
+plt.plot(noise_ortho,'--',alpha= .5,  label= 'Orthogonalized Noise')
+plt.plot(noise - np.linalg.pinv(D)@D@noise, alpha = .5, label='Numerical')
 plt.legend()
 
 
