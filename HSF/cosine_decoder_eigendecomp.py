@@ -14,8 +14,8 @@ import math
 
 
 
-
-N = 127
+plt.rcParams['lines.linewidth'] = 2
+N = 128
 
 d = 2
 mode = '2d cosine'
@@ -83,16 +83,16 @@ v_sin = -v_sin / np.linalg.norm(v_sin)
 
  
 
-plt.figure()
+plt.figure("eigdecomp")
 plt.xlabel(r'Neuron j')
 plt.ylabel(r'$V_j$')
-plt.title("Eigenvectors of $D^{T}D$")
+plt.title("Eigenvectors of $D^{T}D$, N = %i"%N)
 plt.plot( v[:,-1], label =  r'$v_1$ Numeric, $\lambda_1 = %.3f$'%s[-1])
 plt.plot( v[:,-2], label =  r'$v_2$ Numeric, $\lambda_2 = %.3f$'%s[-2])
 plt.plot( v_cos,'--', label =  r'$v_{cos}$ Analytic, a1 = %.3f'%((N+1)/2))
 plt.plot( v_sin,'--', label =  r'$v_{sin}$ Analytic, b1 = %.3f'%((N-1)/2))
 plt.legend()
-
+plt.show()
 
 
 
@@ -105,7 +105,7 @@ e_init = dt_dag @ v_init
  
 
 ##add noise
-noise = 100 * np.random.normal(scale = 1, size=(N,))
+noise = 10 * np.random.normal(scale = 1, size=(N,))
 
 def ortho_proj(v, k):
     '''
@@ -124,8 +124,10 @@ def ortho_proj(v, k):
     
     return  ( ak * np.asarray(cos_vec) + bk * np.asarray(sin_vec) )
 
-
 noise_ortho =  noise - ortho_proj(noise, 1) 
+ortho_norm = np.linalg.norm(noise_ortho)
+noise = ortho_norm * noise / np.linalg.norm(noise)
+
 
 v_p = v_init + noise
 e_p = dt_dag @ v_p
@@ -135,25 +137,42 @@ e_new = dt_dag @ v_new
 
 
 plt.figure()
-plt.plot(noise, alpha = .5, label = 'Raw Noise')
-plt.plot(noise_ortho,'--',alpha= .5,  label= 'Orthogonalized Noise')
-plt.plot(noise - np.linalg.pinv(D)@D@noise, alpha = .5, label='Numerical')
+plt.plot(noise, alpha = .5, label = 'Raw Noise, Norm = %.5f'%np.linalg.norm(noise))
+plt.plot(noise_ortho,'--',alpha= .8,  label= 'Orthogonalized Noise, Norm = %.5f'%np.linalg.norm(noise_ortho))
+plt.plot(noise - np.linalg.pinv(D)@D@noise, alpha = .3, label='Numerical')
+plt.title('Noise Added to Voltages')
 plt.legend()
-
+plt.show()
 
 plt.figure()
 plt.plot(np.arange(N), v_init,alpha = .5, label='Initial Voltage')
 plt.plot(np.arange(N), v_init + noise, alpha = .5, label = 'Raw-Perturbed Voltage')
 plt.plot(np.arange(N), v_new, alpha = .5,  label= 'Ortho-Perturbed Voltage')
-plt.legend()  
+plt.title('Voltages')
+plt.legend()
+plt.show()  
   
-  
+min_ex = 1.5 * np.min(e_p[0])
+max_ex = 1.5 * np.max(e_p[0])
+min_x = np.min([min_ex, -1])
+max_x = np.max([max_ex, 1])
+xlims = [min_x, max_x]
+
+min_ey = 1.5 * np.min(e_p[1])
+max_ey = 1.5 * np.max(e_p[1])
+min_y = np.min([min_ey, -1])
+max_y = np.max([max_ey, 1])
+ylims = [min_y, max_y]
+
 plt.figure()
 plt.scatter(e_init[0], e_init[1],s= 100, marker='x', label= 'original error')
 plt.scatter(e_new[0], e_new[1],s = 100, marker='*',alpha=.5, label= 'ortho noise perturbed error')
 plt.scatter(e_p[0], e_p[1],s = 100, marker='.',alpha=.5, label= 'raw noise-perturbed error')
-plt.xlim([-1.5 * np.min(e_p[0]), 1.5 * np.max(e_p[0])])
-plt.ylim([-1.5 * np.min(e_p[1]), 1.5 * np.max(e_p[1])])
+plt.xlim(xlims)
+plt.ylim(ylims)
+plt.title('Error of Voltages')
+print(min_ey, max_ey)
+print(ylims)
 plt.legend()
 
 

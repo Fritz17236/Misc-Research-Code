@@ -89,6 +89,14 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         data['t_true'] = true_data['t']
         data['dec'] = self.decoherence(data['V'])
         
+        #compute error trajectory, e = dtdag @ V
+        num_pts = len(data['t_true'])
+        errs = np.zeros((data['A'].shape[0],num_pts))
+        dt_dag = np.linalg.pinv(data['D'].T)
+        for i in np.arange(num_pts):
+            errs[:,i] = dt_dag @ data['V'][:,i]
+            
+        data['error'] = errs
         return data
     
     @abstractmethod  
@@ -155,7 +163,7 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         " when state is %s"%((self.Mc@u).shape, self.V[:,-1:].shape)
         
         if self.inject_noise[0]:
-            noise = self.inject_noise[1](self)
+            noise = self.inject_noise[1](self) / self.dt
         else:
             noise = np.zeros((self.N,1))
         
