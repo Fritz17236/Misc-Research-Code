@@ -53,18 +53,21 @@ class DynamicalSystemSim(ABC):
             events = event
             )
         
-        sim_data = {}
-        
-        for param in self.__dict__.keys():
-            sim_data[str(param)] = self.__dict__[param]
-        
+        sim_data = self.pack_data()
         
         sim_data['X'] = data.y
         sim_data['t'] = data.t
         sim_data['t_events'] = data.t_events
         
         return sim_data
-           
+    
+    def pack_data(self):
+        data = {}
+
+        for d in self.__dict__:
+            data[str(d)] = self.__dict__[d]
+            
+        return data 
                      
     def same_sim_at_point(self, X):
         ''' Copy a simulation sim, except begin at a different state X '''
@@ -165,8 +168,11 @@ class LinearDynamicalSystem(DynamicalSystemSim):
         except TypeError:
             return (self.A@x).flatten()
         
+    def run_sim(self, event=None):
+        
+        return DynamicalSystemSim.run_sim(self, event=event)
+        
 
-    
     
 class OscillatorySimAnalyzer(ABC):
     '''

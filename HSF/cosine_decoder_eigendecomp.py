@@ -8,7 +8,8 @@ Created on Mar 10, 2020
 Eigendecomposition of Decoder basis in R2 and RN
 @author: fritz
 '''
-from HSFNets import * 
+from HSF.HSFNets import * 
+import matplotlib.pyplot as plt
 import math
 
 

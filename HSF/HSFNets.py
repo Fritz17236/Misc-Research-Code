@@ -5,14 +5,18 @@ Created on Feb 19, 2020
 
 Class definitions for Spiking Neural Networks Simulations
 '''
-from numba import jit
-import Simulation_Analysis_Toolset as sat
+import Simulation_Analysis_Toolset as sat 
 import numpy as np
-import matplotlib.pyplot as plt
 from abc import abstractmethod
+import ctypes as ct
+import matplotlib.pyplot as plt #@UnusedImport squelch
+from numba import jit
 '''
 Class Definitions
 '''
+   
+#load c solver
+c_lib = ct.CDLL('c_src/c_solver.so')
     
 class SpikingNeuralNet(sat.DynamicalSystemSim):
     ''' 
@@ -37,8 +41,11 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         for i in np.arange(self.N):
             self.O[str(i)] = []
         
-        self.V = np.zeros((N,1))
+        self.num_pts = int(np.floor(((T - t0)/dt))) 
         
+        self.V = np.zeros((N,self.num_pts))
+        self.r = np.zeros_like(self.V)
+        self.t = np.zeros((self.num_pts,))
         super().__init__(None, T, dt, t0)
         
         self.inject_noise = (False, None) # to add voltage noise, set this to (true, func(net)) where func is a handle 
@@ -61,19 +68,16 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         dtd = np.linalg.pinv(D.T @ D)
         I = np.eye((V.shape[0]))
         
-        diss = np.zeros(V.shape)
-        for i in np.arange(diss.shape[1]):
-            diss[:,i] = (dtd - I) @ V[:,i]
+        dec = np.zeros(V.shape)
+        for i in np.arange(dec.shape[1]):
+            dec[:,i] = (dtd - I) @ V[:,i]
             
-        return diss
+        return dec
 
     
-    def pack_data(self):
+    def pack_data(self, final=True):
         ''' Pack simulation data into dict object '''
-        data = {}
-
-        for d in self.__dict__:
-            data[str(d)] = self.__dict__[d]
+        data = super().pack_data()
         
         data['r'] = np.asarray(self.r)
         data['V'] = np.asarray(self.V)
@@ -83,19 +87,19 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         assert(data['V'].shape[1] == len(data['t'])), "V has shape %s but t has shape %s"%(data['V'].shape, data['t'].shape)
         
         data['x_hat'] = self.D @ data['r'] 
-        true_data = self.lds.run_sim()
-        data['x_true'] = true_data['X']
-        data['t_true'] = true_data['t']
+        data['x_true'] = data['lds_data']['X']
+        data['t_true'] = data['lds_data']['t']
         data['dec'] = self.decoherence(data['V'])
         
         #compute error trajectory, e = dtdag @ V
-        num_pts = len(data['t_true'])
-        errs = np.zeros((data['A'].shape[0],num_pts))
-        dt_dag = np.linalg.pinv(data['D'].T)
-        for i in np.arange(num_pts):
-            errs[:,i] = dt_dag @ data['V'][:,i]
-            
-        data['error'] = errs
+        if final:
+            num_pts = len(data['t_true'])
+            errs = np.zeros((data['A'].shape[0],num_pts))
+            dt_dag = np.linalg.pinv(data['D'].T)
+            for i in np.arange(num_pts):
+                errs[:,i] = dt_dag @ data['V'][:,i]
+                
+            data['error'] = errs
         return data
     
     @abstractmethod  
@@ -138,7 +142,6 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         self.Mo = - D.T @ D
         self.Mc = D.T @ lds.B
         
-        self.t = [t0]
         
         
         
@@ -151,10 +154,11 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
             self.vth = self.vth * .5
             
         
-        self.r  = (np.asarray([np.linalg.pinv(D) @ lds.X0]).T)
+        self.r[:,0:]  = (np.asarray([np.linalg.pinv(D) @ lds.X0]).T)
         
-       
+        
     def V_dot(self):
+        '''implemented in jit in run_sim'''
         u = self.lds.u(self.t[-1])
         if (u.ndim == 1):
             u = np.expand_dims(u, axis = 1)
@@ -171,37 +175,64 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
     
     def r_dot(self):
         '''
-        Compute the post synaptic current
+        implemented in jit in run_sim
         '''
-        return -self.lam * self.r[:,-1:]
-          
+        pass
+      
                 
     def spike(self, idx):
-        self.V[:,-1] += self.Mo[:,idx]
-        self.r[idx,-1] += 1
-        self.O[str(idx)].append(self.t[-1])
+        '''implemented using jit in run_sim'''
+        pass
+       
         
-          
-    def run_sim(self): # convert to c module
-        dt = self.dt
+    def run_sim(self): 
+        '''
+        process data and call c_solver library to quickly run sims
+        '''
+        @jit(nopython=True)     
+        def fast_sim(dt, vth, num_pts, t, V, r, Mv, Mo, Mr, Mc,  lam):
+            '''run the sim quickly using numba just-in-time compilation'''
+            #run sim
+            for count in np.arange(num_pts):
+                #get largest voltage above threshold
+                diff = V[:,count] - vth
+                max_v = np.max(diff)
+                if max_v >= 0:
+                    idx = np.argmax(diff) 
+                    V[:,count] += Mo[:,idx]
+                    r[idx,count] += 1
+                    #O[str(idx)].append(t[-1])
+                    
+                r_dot = -lam * r[:,count]   
+                v_dot = Mv @ (V[:,count]) + Mr @ (r[:,count])    
+                
+                r[:,count+1] = r[:,count] +  dt * r_dot
+                V[:,count+1] = V[:,count] +  dt * v_dot
+                t[count] = dt
+                count += 1
+                
+                
+        
+        self.lds_data = self.lds.run_sim()
+        U = lds_data['U']
         vth = self.vth
-        count = 0
-        while count < int(np.floor(((self.T - self.t0)/self.dt))) - 1:
-            if not self.suppress_console_output:
-                print('Simulation Time: %f' %self.t[-1])
-            
-            #get largest voltage above threshold
-            diff = self.V[:,-1] - self.vth
-            max = np.max(diff)
-            if max >= 0:
-                self.spike(np.argmax(diff))
-            
-            self.r = np.append(self.r, self.r[:,-1:] +  dt * self.r_dot(), axis=1 )
-            self.V = np.append(self.V, self.V[:,-1:] +  dt * self.V_dot(), axis=1 )
-            self.t.append(self.t[-1] + self.dt)
-            
-            count += 1
-            
+        num_pts = self.num_pts
+        dt = self.dt
+        t = np.asarray(self.t)
+        V = self.V
+        r = self.r
+        Mv = self.Mv
+        Mo = self.Mo
+        Mr = self.Mr
+        Mc = self.Mc
+        lam  = self.lam
+        
+    
+        fast_sim(dt, vth, num_pts, t, V, r, Mv, Mo, Mr, Mc, lam)
+        print(V.shape)
+
+        #self.O = O
+
         if not self.suppress_console_output:
             print('Simulation Complete.')
         
@@ -243,3 +274,39 @@ def gen_decoder(d, N, mode='random'):
             D[1,:] = np.sin(thetas)
             
             return D
+    
+    
+    
+      
+A =  np.zeros((2,2))
+A[0,1] = 1
+A[1,0] = -1
+A = 10 * A
+N = 128
+lam =  5
+mode = '2d cosine'
+p = 1
+
+    
+D = gen_decoder(A.shape[0], N, mode=mode)
+B = np.eye(2)
+u0 = .001*D[:,0]
+x0 = np.asarray([0, 1])
+T = 10
+dt = 1e-5
+
+lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = lambda t: u0 , T = T, dt = dt)
+
+
+net = GapJunctionDeneveNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0, thresh = 'not full')
+
+
+data = net.run_sim()
+
+plt.plot(data['x_hat'][0,:],label='xhat')
+plt.plot(data['x_true'][0,:],label='xtru')
+plt.legend()
+
+plt.figure()
+plt.plot(np.max(data['V']))
+plt.show()

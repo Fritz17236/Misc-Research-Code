@@ -4,7 +4,6 @@ Created on Mar 16, 2020
 @author: fritz
 '''
 from HSF.HSFNets import * #@unusedwildimport squelch
-
 A =  np.zeros((2,2))
 A[0,1] = 1
 A[1,0] = -1
@@ -20,9 +19,8 @@ B = np.eye(2)
 u0 = .001*D[:,0]
 x0 = np.asarray([1, 1])
 T = 1
-sim_dt = 1e-4
-lds_dt = 1e-3
-lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = lambda t: u0 , T = T, dt = lds_dt)
+dt = 1e-4
+lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = lambda t: u0 , T = T, dt = dt)
 
 
 def eigen_spec_partition(data):
@@ -59,7 +57,7 @@ def eigen_spec_full(data, D):
     return eig_spec, u, s, vt 
     
     
-net = SpikeDropDeneveNet(T, sim_dt, N, D, lds, lam, p, t0=0, thresh = 'not full')
+net = SpikeDropDeneveNet(T, dt, N, D, lds, lam, p, t0=0, thresh = 'not full')
 
 
 data = net.run_sim()

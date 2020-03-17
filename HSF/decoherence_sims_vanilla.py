@@ -3,8 +3,8 @@ Created on Mar 12, 2020
 
 @author: fritz
 '''
-from HSFNets import *
-
+from HSF.HSFNets import * #@unusedwildimport squelch
+import matplotlib.pyplot as plt
 
 def ortho_gaussian_noise(net):
     ''' Return gaussian noise but projected onto the decohered basis '''
