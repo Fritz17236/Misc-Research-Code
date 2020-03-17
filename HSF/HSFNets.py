@@ -5,7 +5,7 @@ Created on Feb 19, 2020
 
 Class definitions for Spiking Neural Networks Simulations
 '''
-
+from numba import jit
 import Simulation_Analysis_Toolset as sat
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,7 +14,6 @@ from abc import abstractmethod
 Class Definitions
 '''
     
-
 class SpikingNeuralNet(sat.DynamicalSystemSim):
     ''' 
     A SpikingNeuralNet object is used to simulate a spiking neural network that
@@ -109,7 +108,7 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
     def V_dot(self, X):
         pass
 
-
+    
     @abstractmethod
     def r_dot(self, r):
         '''
@@ -117,7 +116,7 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         '''
         pass
     
-
+    
     @abstractmethod
     def spike(self, V, O_t):
         ''' 
@@ -127,9 +126,9 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         assert( len(O_t) <= self.N)
 
 
-
 class GapJunctionDeneveNet(SpikingNeuralNet):
     ''' Spiking Net According to Classic Deneve Paper w/ Erics Voltage Modification''' 
+    
     def __init__(self, T, dt, N, D, lds, lam, t0 = 0, thresh = 'full'):
         super().__init__(T = T, dt = dt, N = N, D = D, lds = lds, lam = lam, t0 = t0)
         
@@ -154,7 +153,7 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         
         self.r  = (np.asarray([np.linalg.pinv(D) @ lds.X0]).T)
         
-        
+       
     def V_dot(self):
         u = self.lds.u(self.t[-1])
         if (u.ndim == 1):
@@ -169,21 +168,21 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         
         return self.Mv @ (self.V[:,-1:]) + self.Mr @ (self.r[:,-1:]) + self.Mc @ u + noise 
     
-
+    
     def r_dot(self):
         '''
         Compute the post synaptic current
         '''
         return -self.lam * self.r[:,-1:]
           
-            
-    def spike(self, idx): 
+                
+    def spike(self, idx):
         self.V[:,-1] += self.Mo[:,idx]
         self.r[idx,-1] += 1
         self.O[str(idx)].append(self.t[-1])
         
-        
-    def run_sim(self):
+          
+    def run_sim(self): # convert to c module
         dt = self.dt
         vth = self.vth
         count = 0
@@ -209,13 +208,13 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         return super().run_sim()
 
 
-
 class SpikeDropDeneveNet(GapJunctionDeneveNet):
+    
     def __init__(self, T, dt, N, D, lds, lam, p, t0 = 0, thresh = 'not full'):
         super().__init__(T, dt, N, D, lds, lam, t0, thresh)
         self.p = p
         self.seed = 0
-        
+           
     def spike(self,idx):
         np.random.seed(self.seed)
         draw = np.random.binomial(1, self.p, size = (self.N,))

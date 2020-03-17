@@ -12,11 +12,10 @@ from scipy.integrate import solve_ivp
 from scipy.signal import find_peaks
 from abc import ABC, abstractmethod 
 import cmath
-    
+ 
 
 # check get latent phase
 # perturbation at 0 should give phase 0 
-
 
 class DynamicalSystemSim(ABC):
     '''
@@ -25,7 +24,6 @@ class DynamicalSystemSim(ABC):
      deriv( self, t, X)
      copy_sim(cls, data
      '''
-    
     def __init__(self, X0, T, dt, t0 = 0):
         ''' Initialize dynamical system parameters including 
         X0: the initial system state (must be an iterable object)
@@ -38,7 +36,6 @@ class DynamicalSystemSim(ABC):
         self.T = T
         self.dt = dt
   
-    
     def run_sim(self, event = None):
         '''
         Run the numerical integration & return the simulation data structure.
@@ -68,13 +65,14 @@ class DynamicalSystemSim(ABC):
         
         return sim_data
            
-                 
+                     
     def same_sim_at_point(self, X):
         ''' Copy a simulation sim, except begin at a different state X '''
         sim_copy = self.copy_sim()
         sim_copy.X0 = X
         return sim_copy
     
+        
     @abstractmethod
     def deriv(self, t, X):
         '''
@@ -83,7 +81,7 @@ class DynamicalSystemSim(ABC):
         set of equations defining the dynamical system
         '''
         pass    
-        
+            
     def copy_sim(self):
         '''
         Return a simulation with the same parameters
@@ -95,7 +93,6 @@ class DynamicalSystemSim(ABC):
   
  
    
-            
 class LinearDynamicalSystem(DynamicalSystemSim):
     '''
     A LinearDynamicalSystem (LDS) object instantiates a specified dynamical 
@@ -128,7 +125,7 @@ class LinearDynamicalSystem(DynamicalSystemSim):
 
     
     '''
-    
+        
     def __init__(self, init_state, A, init_input, B, u = None, dt = .001, T = 10):
         '''
         Initialize the Linear Dynamical System. If there are any defaults, ensure they have appropriate
@@ -154,7 +151,7 @@ class LinearDynamicalSystem(DynamicalSystemSim):
         
         
         super().__init__(X0, T, dt)
-
+    
     def deriv(self, t, x):
         '''
         Return the derivative of the state (x-dot) at the current time
@@ -169,8 +166,6 @@ class LinearDynamicalSystem(DynamicalSystemSim):
             return (self.A@x).flatten()
         
 
-
-    
     
     
 class OscillatorySimAnalyzer(ABC):
@@ -178,12 +173,12 @@ class OscillatorySimAnalyzer(ABC):
     Base class for analyzing data from DynamicalSystemSim Objects that
     contain stable limit cycles. (Oscillatory behavior)
     '''
-    
+        
     def __init__(self, data):
         ''' Initiate with a data object'''
         self.data = data
     
-    
+        
     def perturb_limit_cycle(self, sim, limit_cycle, u, indices):
         '''
         Given sim data, and a set of points of the limit cycle, perturb each limit_cycle[i] by
@@ -204,14 +199,14 @@ class OscillatorySimAnalyzer(ABC):
         print('Perturbed Simulations Complete...')
         return pert_datas
             
-   
+       
     def lc_period(self, limit_cycle):
         '''
         Given a limit cycle, determine the period of limit cycle oscillation.
         '''
         return limit_cycle['t'][-1] - limit_cycle['t'][0]
 
-
+    
     def lc_times_to_phases(self, limit_cycle, rads = False):
         ''' 
         Given a limit cycle, return an array of phases
@@ -230,7 +225,7 @@ class OscillatorySimAnalyzer(ABC):
                 
         return np.asarray(phases)
     
-    
+        
     def get_traj_dist_from_lc(self, limit_cycle, traj):
         '''
         Given a limit cycle and a trajectory (2,N array), compute the distance
@@ -242,7 +237,7 @@ class OscillatorySimAnalyzer(ABC):
              for i in np.arange(traj.shape[1])
              ])
 
- 
+     
     def trajectory_difference(self, X, Y, errfunc):
         '''
         Given two (Dim x N trajectories), X & Y, return their 
@@ -252,7 +247,7 @@ class OscillatorySimAnalyzer(ABC):
                               for i in np.arange(len(X[0,:]))
                                ])             
 
-
+    
     def traj_idx_of_lc_convergence(self, limit_cycle, trajectory, delta):
         '''
         Given a limit cycle, a distance delta, and trajectory (Dim, N array).
@@ -261,7 +256,7 @@ class OscillatorySimAnalyzer(ABC):
         the trajectory is *always* within delta of the limit cycle after the
         returned index.
         '''
-    
+            
         def converged(X, limit_cycle, delta):
             ''' Check if a point X is within delta of limit_cycle '''
             
@@ -272,7 +267,7 @@ class OscillatorySimAnalyzer(ABC):
             else:
                 return False
     
-    
+            
         def bin_search_conv_idx(trajectory, limit_cycle, delta):
             '''
             Recursively implement binary search to find smallest index of convergence
@@ -324,7 +319,7 @@ class OscillatorySimAnalyzer(ABC):
         else:
             return conv_idx    
        
-       
+           
     def concat_data_traj(self, data0, data1, get_clip_idx = False):
         ''' 
         Given two data objects, concatenate their state trajectories such that
@@ -340,7 +335,7 @@ class OscillatorySimAnalyzer(ABC):
         else:
             return data0
     
-    
+        
     def plot(self, data, mode = 'plot', fig_name = None, **kwargs):
         '''
         Plot the 2-D data given 

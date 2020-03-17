@@ -15,7 +15,7 @@ import math
 
 
 plt.rcParams['lines.linewidth'] = 2
-N = 128
+N = 100
 
 d = 2
 mode = '2d cosine'
@@ -24,6 +24,11 @@ D = gen_decoder(d, N, mode)
 dtd = D.T@D
 dt_dag = np.linalg.pinv(D.T)
 
+plt.figure()
+u,s,vt = np.linalg.svd(D)
+for i in np.arange(N,step = 10):
+    plt.plot(vt[:,i])
+plt.show()
 
 def fft_mtx(N): 
     ''' Create an NxN FFT matrix '''

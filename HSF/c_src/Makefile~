@@ -1,0 +1,2 @@
+c_solver: c_solver.cpp 
+     g++ -o c_solver c_solver.cpp -I.

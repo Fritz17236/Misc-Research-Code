@@ -5,7 +5,6 @@ Created on Mar 16, 2020
 '''
 from HSF.HSFNets import * #@unusedwildimport squelch
 
-
 A =  np.zeros((2,2))
 A[0,1] = 1
 A[1,0] = -1
@@ -15,13 +14,13 @@ lam =  5
 mode = '2d cosine'
 p = .99
 
-
+    
 D = gen_decoder(A.shape[0], N, mode=mode)
 B = np.eye(2)
 u0 = .001*D[:,0]
 x0 = np.asarray([1, 1])
 T = 1
-sim_dt = 1e-5
+sim_dt = 1e-4
 lds_dt = 1e-3
 lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = lambda t: u0 , T = T, dt = lds_dt)
 
