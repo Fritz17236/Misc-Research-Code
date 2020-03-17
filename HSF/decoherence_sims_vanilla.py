@@ -124,8 +124,6 @@ if run_sweep:
 # compute isi stats
 # increase noise strength
  
- 
-{}
 
 # look at error trajectory over time
 # run sim, one with gausisan noise regular

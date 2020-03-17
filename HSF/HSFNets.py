@@ -190,11 +190,13 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         while count < int(np.floor(((self.T - self.t0)/self.dt))) - 1:
             if not self.suppress_console_output:
                 print('Simulation Time: %f' %self.t[-1])
-            spiked = self.V[:,-1] > vth
             
-            for idx in np.nonzero(spiked)[0]:
-                self.spike(idx)
-                break
+            #get largest voltage above threshold
+            diff = self.V[:,-1] - self.vth
+            max = np.max(diff)
+            if max >= 0:
+                self.spike(np.argmax(diff))
+            
             self.r = np.append(self.r, self.r[:,-1:] +  dt * self.r_dot(), axis=1 )
             self.V = np.append(self.V, self.V[:,-1:] +  dt * self.V_dot(), axis=1 )
             self.t.append(self.t[-1] + self.dt)
@@ -208,19 +210,19 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
 
 
 
-
 class SpikeDropDeneveNet(GapJunctionDeneveNet):
-    def __init__(self, T, dt, N, D, lds, lam, p, t0 = 0):
-        super().__init__(T, dt, N, D, lds, lam, t0)
+    def __init__(self, T, dt, N, D, lds, lam, p, t0 = 0, thresh = 'not full'):
+        super().__init__(T, dt, N, D, lds, lam, t0, thresh)
         self.p = p
-        self.readout_mask = np.ones((N,))
+        self.seed = 0
         
     def spike(self,idx):
+        np.random.seed(self.seed)
         draw = np.random.binomial(1, self.p, size = (self.N,))
         self.V[:,-1] += np.diag(draw) @ self.Mo[:,idx]
         self.r[idx,-1] += 1
-        self.readout_mask = draw
         self.O[str(idx)].append(self.t[-1])
+        self.seed += 1
      
 '''
 Helper functions
