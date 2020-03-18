@@ -8,16 +8,16 @@ Class definitions for Spiking Neural Networks Simulations
 import Simulation_Analysis_Toolset as sat 
 import numpy as np
 from abc import abstractmethod
-import ctypes as ct
 import matplotlib.pyplot as plt #@UnusedImport squelch
 from numba import jit
 '''
 Class Definitions
 '''
    
-#load c solver
-c_lib = ct.CDLL('c_src/c_solver.so')
-    
+#todo:
+# finish spikedropnerualnet
+# integrate O 
+# clean up
 class SpikingNeuralNet(sat.DynamicalSystemSim):
     ''' 
     A SpikingNeuralNet object is used to simulate a spiking neural network that
@@ -36,10 +36,6 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         self.lam = lam #leak term
         self.D = D # Decoder matrix
         self.suppress_console_output = False
-        
-        self.O = {}
-        for i in np.arange(self.N):
-            self.O[str(i)] = []
         
         self.num_pts = int(np.floor(((T - t0)/dt))) 
         
@@ -140,11 +136,8 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         self.Mv = D.T @ lds.A @ np.linalg.pinv(D.T)
         self.Mr = D.T @ (lds.A + lam * np.eye(lds.A.shape[0])) @ D
         self.Mo = - D.T @ D
-        self.Mc = D.T @ lds.B
-        
-        
-        
-        
+        self.Mc = D.T @ lds.B    
+        self.O = np.asarray([[] for i in np.arange(N)])
         self.vth = np.asarray(
             [ D[:,i].T @ D[:,i] for i in np.arange(N)],
             dtype = np.double
@@ -190,48 +183,47 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         process data and call c_solver library to quickly run sims
         '''
         @jit(nopython=True)     
-        def fast_sim(dt, vth, num_pts, t, V, r, Mv, Mo, Mr, Mc,  lam):
+        def fast_sim(dt, vth, num_pts, t, V, r, O, U, Mv, Mo, Mr, Mc,  lam):
             '''run the sim quickly using numba just-in-time compilation'''
             #run sim
             for count in np.arange(num_pts):
-                #get largest voltage above threshold
+                print(int((count+1)/num_pts * 100), r'%')
+                #get if max voltage above thresh then spike
                 diff = V[:,count] - vth
                 max_v = np.max(diff)
                 if max_v >= 0:
                     idx = np.argmax(diff) 
                     V[:,count] += Mo[:,idx]
                     r[idx,count] += 1
-                    #O[str(idx)].append(t[-1])
+                    O[idx] = np.append(O[idx], t[-1])
                     
                 r_dot = -lam * r[:,count]   
                 v_dot = Mv @ (V[:,count]) + Mr @ (r[:,count])    
                 
                 r[:,count+1] = r[:,count] +  dt * r_dot
                 V[:,count+1] = V[:,count] +  dt * v_dot
-                t[count] = dt
+                t[count+1] =  t[count] + dt
                 count += 1
                 
                 
         
         self.lds_data = self.lds.run_sim()
-        U = lds_data['U']
+        U = self.lds_data['U']
         vth = self.vth
         num_pts = self.num_pts
         dt = self.dt
         t = np.asarray(self.t)
         V = self.V
         r = self.r
+        O = self.O
         Mv = self.Mv
         Mo = self.Mo
         Mr = self.Mr
         Mc = self.Mc
         lam  = self.lam
         
-    
-        fast_sim(dt, vth, num_pts, t, V, r, Mv, Mo, Mr, Mc, lam)
-        print(V.shape)
+        fast_sim(dt, vth, num_pts, t, V, r, O, U, Mv, Mo, Mr, Mc, lam)
 
-        #self.O = O
 
         if not self.suppress_console_output:
             print('Simulation Complete.')
@@ -281,19 +273,19 @@ def gen_decoder(d, N, mode='random'):
 A =  np.zeros((2,2))
 A[0,1] = 1
 A[1,0] = -1
-A = 10 * A
-N = 128
-lam =  5
+A =  A
+N = 64
+lam =  1
 mode = '2d cosine'
-p = 1
+p = .5
 
     
-D = gen_decoder(A.shape[0], N, mode=mode)
+D = .01 * gen_decoder(A.shape[0], N, mode=mode)
 B = np.eye(2)
-u0 = .001*D[:,0]
+u0 = D[:,0]
 x0 = np.asarray([0, 1])
-T = 10
-dt = 1e-5
+T = 5
+dt = 1e-3
 
 lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = lambda t: u0 , T = T, dt = dt)
 
@@ -302,11 +294,8 @@ net = GapJunctionDeneveNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0, thresh 
 
 
 data = net.run_sim()
-
-plt.plot(data['x_hat'][0,:],label='xhat')
-plt.plot(data['x_true'][0,:],label='xtru')
+plt.plot(data['t'], data['x_hat'][0,:],label='xhat')
+plt.plot(data['t'], data['x_true'][0,:],label='xtru')
 plt.legend()
 
-plt.figure()
-plt.plot(np.max(data['V']))
 plt.show()
