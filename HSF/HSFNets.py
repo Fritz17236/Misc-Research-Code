@@ -251,6 +251,7 @@ class SpikeDropDeneveNet(GapJunctionDeneveNet):
         self.p = p
         self.seed = 0
         
+        
 
   
            
@@ -275,7 +276,7 @@ class SpikeDropDeneveNet(GapJunctionDeneveNet):
                     np.random.seed(seed)
                     draw = np.asarray(np.random.binomial(1, p, size = (len(vth),)), dtype = np.float64)
 
- 
+                    draw[idx] = 1 
                     draw = np.multiply(draw, Mo[:,idx])
                     V[:,count] +=  draw
                     r[idx,count] += 1
