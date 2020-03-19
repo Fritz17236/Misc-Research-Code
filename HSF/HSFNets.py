@@ -10,14 +10,19 @@ import numpy as np
 from abc import abstractmethod
 import matplotlib.pyplot as plt #@UnusedImport squelch
 from numba import jit
+from scipy.optimize import nnls
+from scipy.linalg import expm
 '''
 Class Definitions
 '''
    
 #todo:
-# finish spikedropnerualnet
+# exponential integrator for better accuracy 
 # integrate O 
 # clean up
+# dictionary packing for passing params (kwargs)
+
+
 class SpikingNeuralNet(sat.DynamicalSystemSim):
     ''' 
     A SpikingNeuralNet object is used to simulate a spiking neural network that
@@ -147,7 +152,8 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
             self.vth = self.vth * .5
             
         
-        self.r[:,0:]  = (np.asarray([np.linalg.pinv(D) @ lds.X0]).T)
+        r0 = nnls(D, lds.X0)[0]
+        self.r[:,0]  = np.asarray(r0)
         
         
     def V_dot(self):
@@ -183,10 +189,10 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         process data and call c_solver library to quickly run sims
         '''
         @jit(nopython=True)     
-        def fast_sim(dt, vth, num_pts, t, V, r, O, U, Mv, Mo, Mr, Mc,  lam):
+        def fast_sim(dt, vth, num_pts, t, V, r, O, U, Mv, Mo, Mr, Mc,  lam, A_exp):
             '''run the sim quickly using numba just-in-time compilation'''
-            #run sim
-            for count in np.arange(num_pts):
+            N = V.shape[0]
+            for count in np.arange(num_pts-1):
                 print(int((count+1)/num_pts * 100), r'%')
                 #get if max voltage above thresh then spike
                 diff = V[:,count] - vth
@@ -196,12 +202,13 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
                     V[:,count] += Mo[:,idx]
                     r[idx,count] += 1
                     O[idx] = np.append(O[idx], t[-1])
-                    
-                r_dot = -lam * r[:,count]   
-                v_dot = Mv @ (V[:,count]) + Mr @ (r[:,count])    
                 
-                r[:,count+1] = r[:,count] +  dt * r_dot
-                V[:,count+1] = V[:,count] +  dt * v_dot
+                
+                state = np.hstack((V[:,count], r[:,count]))
+                state = A_exp @ state
+     
+                r[:,count+1] = state[N:]
+                V[:,count+1] = state[0:N] +  dt * Mc @ U[:,count]
                 t[count+1] =  t[count] + dt
                 count += 1
                 
@@ -222,7 +229,12 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         Mc = self.Mc
         lam  = self.lam
         
-        fast_sim(dt, vth, num_pts, t, V, r, O, U, Mv, Mo, Mr, Mc, lam)
+        top = np.hstack((Mv, Mr))
+        bot = np.hstack((np.zeros((self.N, self.N)), -lam * np.eye(self.N)))
+        A_exp = np.vstack((top, bot)) #matrix exponential for linear part of eq
+        A_exp = expm(A_exp* dt)
+        
+        fast_sim(dt, vth, num_pts, t, V, r, O, U, Mv, Mo, Mr, Mc, lam, A_exp)
 
 
         if not self.suppress_console_output:
@@ -235,16 +247,79 @@ class SpikeDropDeneveNet(GapJunctionDeneveNet):
     
     def __init__(self, T, dt, N, D, lds, lam, p, t0 = 0, thresh = 'not full'):
         super().__init__(T, dt, N, D, lds, lam, t0, thresh)
+        assert(p > 0 and p <= 1), 'Probability of Spike Drops must be greater than 0, and less/equal to 1, but was %f'%p
         self.p = p
         self.seed = 0
+        
+
+  
            
-    def spike(self,idx):
-        np.random.seed(self.seed)
-        draw = np.random.binomial(1, self.p, size = (self.N,))
-        self.V[:,-1] += np.diag(draw) @ self.Mo[:,idx]
-        self.r[idx,-1] += 1
-        self.O[str(idx)].append(self.t[-1])
-        self.seed += 1
+        
+        
+    def run_sim(self):
+        
+        @jit(nopython=True)
+        def fast_sim(dt, vth, num_pts, t, V, r, O, U, Mv, Mo, Mr, Mc, lam, A_exp, p):
+            '''run the sim quickly using numba just-in-time compilation'''
+            #run sim
+            seed = 0
+            N = len(V[:,0])
+            for count in np.arange(num_pts - 1):
+                print(int((count+1)/num_pts * 100), r'%')
+                #get if max voltage above thresh then spike
+                diff = V[:,count] - vth
+                max_v = np.max(diff)
+
+                if max_v >= 0:
+                    idx = np.argmax(diff)
+                    np.random.seed(seed)
+                    draw = np.asarray(np.random.binomial(1, p, size = (len(vth),)), dtype = np.float64)
+
+ 
+                    draw = np.multiply(draw, Mo[:,idx])
+                    V[:,count] +=  draw
+                    r[idx,count] += 1
+                    O[idx] = np.append(O[idx], t[-1])
+                    seed += 1
+
+                    
+                state = np.hstack((V[:,count], r[:,count]))
+                state = A_exp @ state
+     
+                r[:,count+1] = state[N:]
+                V[:,count+1] = state[0:N] +  dt * Mc @ U[:,count]
+                t[count+1] =  t[count] + dt
+                count += 1
+
+        
+        self.lds_data = self.lds.run_sim()
+        U = self.lds_data['U']
+        vth = self.vth
+        num_pts = self.num_pts
+        dt = self.dt
+        t = np.asarray(self.t)
+        V = self.V
+        r = self.r
+        O = self.O
+        Mv = self.Mv
+        Mo = self.Mo
+        Mr = self.Mr
+        Mc = self.Mc
+        lam  = self.lam
+        p = self.p
+
+        top = np.hstack((Mv, Mr))
+        bot = np.hstack((np.zeros((self.N,self.N)), -lam * np.eye(self.N)))
+        A_exp = np.vstack((top, bot)) #matrix exponential for linear part of eq
+        A_exp = expm(A_exp* dt)
+        
+        fast_sim(dt, vth, num_pts, t, V, r, O, U, Mv, Mo, Mr, Mc, lam, A_exp, p)
+
+
+        if not self.suppress_console_output:
+            print('Simulation Complete.')
+        
+        return SpikingNeuralNet.run_sim(self)
      
 '''
 Helper functions
@@ -269,33 +344,34 @@ def gen_decoder(d, N, mode='random'):
     
     
     
-      
-A =  np.zeros((2,2))
-A[0,1] = 1
-A[1,0] = -1
-A =  A
-N = 64
-lam =  1
-mode = '2d cosine'
-p = .5
-
-    
-D = .01 * gen_decoder(A.shape[0], N, mode=mode)
-B = np.eye(2)
-u0 = D[:,0]
-x0 = np.asarray([0, 1])
-T = 5
-dt = 1e-3
-
-lds = sat.LinearDynamicalSystem(x0, A, u0, B, u = lambda t: u0 , T = T, dt = dt)
-
-
-net = GapJunctionDeneveNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0, thresh = 'not full')
-
-
-data = net.run_sim()
-plt.plot(data['t'], data['x_hat'][0,:],label='xhat')
-plt.plot(data['t'], data['x_true'][0,:],label='xtru')
-plt.legend()
-
-plt.show()
+#       
+# A =  np.zeros((2,2))
+# A[0,1] = 1
+# A[1,0] = -1
+# A =  A
+# N = 50
+# lam =  1
+# mode = '2d cosine'
+# p = .9
+# 
+#     
+# D = gen_decoder(A.shape[0], N, mode=mode)
+# B = np.eye(2)
+# u0 = D[:,0]
+# x0 = np.asarray([10, 100])
+# T = 5
+# dt = 1e-4
+# 
+# lds = sat.LinearDynamicalSystem(x0, A, B, u = lambda t: u0 , T = T, dt = dt)
+# 
+# #net = GapJunctionDeneveNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0, thresh = 'not full')
+# net = SpikeDropDeneveNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0, thresh = 'not full', p = p)
+# 
+# 
+# data = net.run_sim()
+# plt.plot(data['t'], data['x_hat'][0,:],label='xhat')
+# plt.plot(data['t'], data['x_true'][0,:],label='xtru')
+# 
+# plt.legend()
+# 
+# plt.show()

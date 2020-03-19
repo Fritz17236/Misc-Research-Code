@@ -129,7 +129,7 @@ class LinearDynamicalSystem(DynamicalSystemSim):
     
     '''
         
-    def __init__(self, init_state, A, init_input, B, u = None, dt = .001, T = 10):
+    def __init__(self, init_state, A, B, u = None, dt = .001, T = 10):
         '''
         Initialize the Linear Dynamical System. If there are any defaults, ensure they have appropriate
         dimensions. 
@@ -139,13 +139,13 @@ class LinearDynamicalSystem(DynamicalSystemSim):
         assert(X0.shape[0] == A.shape[0]), ("State vector size (%i) does not match"\
                                                 " Number of State Transition Matrix Rows (%i)" %(self.x.shape[0], A.shape[0]) )
         self.A = A
-        self.u0 = init_input
         if u is None:
-            self.u = lambda t: np.zeros((B.shape[1],1)) 
+            self.u = lambda t: np.zeros((B.shape[1],1))
+             
         else:
             self.u = u
+        self.u0 = self.u(0)
         assert(self.u0.ndim == 1), "Initial Input is expected to be a vector, but has %i dimensions" %self.u.ndim
-        self._null_input = np.zeros(self.u0.shape)
     
         assert(B.shape[0] == A.shape[0]), "Input matrix rows (%i) should match state transition matrix rows (%i)" %(B.shape[0], A.shape[0])
         assert(B.shape[1] == len(self.u0)), "Input matrix columns (%i) should match length of provided input vector (%i)" %(B.shape[1], self.u.shape[0])
@@ -170,9 +170,10 @@ class LinearDynamicalSystem(DynamicalSystemSim):
         #generate input for each timestep
         
         data =  DynamicalSystemSim.run_sim(self, event=event)
-        if self.u is not None:
-            U = self.u(data['t'])
-            data['U'] = U
+        U = np.zeros((self.B.shape[1], len(data['t'])))
+        for i in np.arange(len(data['t'])):
+            U[:,i] = self.u(data['t'][i])
+        data['U'] = U
         return data
         
 
