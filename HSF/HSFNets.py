@@ -246,6 +246,7 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
 class SpikeDropDeneveNet(GapJunctionDeneveNet):
     
     def __init__(self, T, dt, N, D, lds, lam, p, t0 = 0, thresh = 'not full'):
+         
         super().__init__(T, dt, N, D, lds, lam, t0, thresh)
         assert(p > 0 and p <= 1), 'Probability of Spike Drops must be greater than 0, and less/equal to 1, but was %f'%p
         self.p = p
@@ -275,11 +276,10 @@ class SpikeDropDeneveNet(GapJunctionDeneveNet):
                     idx = np.argmax(diff)
                     np.random.seed(seed)
                     draw = np.asarray(np.random.binomial(1, p, size = (len(vth),)), dtype = np.float64)
-
                     draw[idx] = 1 
                     draw = np.multiply(draw, Mo[:,idx])
-                    V[:,count] +=  draw
-                    r[idx,count] += 1
+                    V[:,count] +=  draw 
+                    r[idx,count] += 1  
                     O[idx] = np.append(O[idx], t[-1])
                     seed += 1
 
@@ -295,24 +295,25 @@ class SpikeDropDeneveNet(GapJunctionDeneveNet):
         
         self.lds_data = self.lds.run_sim()
         U = self.lds_data['U']
-        vth = self.vth
+        p = self.p
+        vth = self.vth 
         num_pts = self.num_pts
         dt = self.dt
         t = np.asarray(self.t)
         V = self.V
         r = self.r
         O = self.O
-        Mv = self.Mv
-        Mo = self.Mo
-        Mr = self.Mr
-        Mc = self.Mc
+        Mv = self.Mv 
+        Mo = self.Mo 
+        Mr = self.Mr 
+        Mc = self.Mc 
         lam  = self.lam
-        p = self.p
+        
 
         top = np.hstack((Mv, Mr))
         bot = np.hstack((np.zeros((self.N,self.N)), -lam * np.eye(self.N)))
         A_exp = np.vstack((top, bot)) #matrix exponential for linear part of eq
-        A_exp = expm(A_exp* dt)
+        A_exp = expm(A_exp * dt)
         
         fast_sim(dt, vth, num_pts, t, V, r, O, U, Mv, Mo, Mr, Mc, lam, A_exp, p)
 
