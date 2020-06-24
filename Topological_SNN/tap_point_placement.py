@@ -606,6 +606,60 @@ K = 2*d # number of desired tap points
 num_clusters = 2 ** d
 num_sample_pts = 50
 
+
+
+
+### With a diffusive grid, we can reduce the number of current injections by
+# diffusing one injection to multiple somas.  
+# we wish to minimize the number of current injections needed to encode an arbitrary stimulus in the soma grid
+
+# diffuser grid injects maximum current at a tap point
+# diffused current decreases geometrically with distance from tap point
+# nearby somas should receive current 1/proportional to their distance for the same stimulus
+    # current at soma i = ai * ei.T x + bi,  where ei is soma encoder, ai,bi tunable params, x is stimulus
+    # limited range of ai/bi
+    # want distance on grid to capture ei.T x = [dot(ei, x) = cos(thetai,x)]+   (relu :=  []+)
+    # cant have negative current so we need only capture the positive part of cosine (theta = -pi/2, pi/2) 
+    # thus current(distance) ~= [cosine(distance)]+
+    
+    
+# assign somas encoders such that the sum over all pairs of soma (a,b):
+    # current(distance(a,b)) is parametrized by lambda but we choose it fixed
+    # current(distance(a,b)) is spherically symmetric by assumption i.e.  inverse squared relationship  
+    #[cosine(distance(a,b))]+ - current(distance(a,b) is minimized 
+    # replace current(distance(a,b)) with  1/distance**2
+    
+    # [cosine(enc_theta(a,b))]+ = current(distance(a,b)
+    # [dot(a,b)]+ = current(distance(a,b))
+    # [dot(a,b)]+ = exp(-lam * dist(a,b))  # assume all vecs unit norm 
+    # theta(a,b) =  acos( exp(-lam * dist(a,b) )
+    
+    
+    # in other words, the angle is a monotonically increasing function of distance 
+    
+    # problem: choose an assignment of vectors on an n x n grid such that the angle between adjacent somas is minimized 
+    
+    # current approach: greedy algorithm
+        # draw n**2 encoders randomly & normalize (gives n**2 encoders distributed uniformly around d-sphere)
+        # start at center of grid and select an encoder randomly
+        # while there are somas/encoders not yet assigned,
+            # pick the nearest soma from the center (by euclidean distance)
+            # average that soma's assigned neighbors
+            # assign that soma the encoder closest (by angle) to the neighborhood average
+            # remove soma/encoder from available assignments 
+    
+    # quantify closeness of encoders by angle: correlation between distance and angle for all pairs (i,j) on nxn grid
+    # greedy works: significantly increases correlation coefficient (rho ~.4 for 2d) over random baseline(rho=0 for all d).
+    # approx. linear relationship between correlation and dimensionality 
+    # what is relationship between dist-ang correlation and number of required tap points? intuitiion: more correlation --> more coverable with diffusion --> less tap points
+      
+     
+    
+    
+
+
+#### Given a m x n grid, assign 
+
    
 #get correlation for random assignments 
 # corrs = []
