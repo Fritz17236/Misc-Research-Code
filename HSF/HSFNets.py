@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt #@UnusedImport squelch
 from numba import jit
 from scipy.optimize import nnls
 from scipy.linalg import expm
+from utils import pad_to_N_diag_matrix
 '''
 Class Definitions
 '''
@@ -75,6 +76,13 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
             
         return dec
 
+      
+    def set_initial_rs(self, D, X0):
+        '''
+        Use nonnegative least squares to set initial PSC/r values
+        '''
+        r0 = nnls(D, X0)[0]
+        self.r[:,0]  = np.asarray(r0)
     
     def pack_data(self, final=True):
         ''' Pack simulation data into dict object '''
@@ -130,7 +138,6 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         '''
         assert( len(O_t) <= self.N)
 
-
 class GapJunctionDeneveNet(SpikingNeuralNet):
     ''' Spiking Net According to Classic Deneve Paper w/ Erics Voltage Modification''' 
     
@@ -148,12 +155,14 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
             dtype = np.double
             )
         
-        if thresh is 'full':
+        if thresh == 'full':
             self.vth = self.vth * .5
             
         
-        r0 = nnls(D, lds.X0)[0]
-        self.r[:,0]  = np.asarray(r0)
+        self.set_initial_rs(D, lds.X0)
+    
+        
+
         
         
     def V_dot(self):
@@ -193,8 +202,10 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
             '''run the sim quickly using numba just-in-time compilation'''
             N = V.shape[0]
             for count in np.arange(num_pts-1):
-                print(int((count+1)/num_pts * 100), r'%')
-                #get if max voltage above thresh then spike
+                pct =  (count+1) / num_pts
+                pct *= 100 
+                if (pct // 1) == 0: 
+                    print( pct * 100, r'%')                #get if max voltage above thresh then spike
                 diff = V[:,count] - vth
                 max_v = np.max(diff)
                 if max_v >= 0:
@@ -242,6 +253,151 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         
         return super().run_sim()
 
+class ClassicDeneveNet(GapJunctionDeneveNet):
+    ''' 
+    Classic Deneve is a special case of Gap Junction coupling.
+    The coupling matrix Mv is replaces with the identity matrix times a leak parameter lam_v
+    '''
+    def __init__(self, T, dt, N, D, lds, lam, lam_v, t0 = 0, thresh = 'full'):
+        super().__init__(T, dt, N, D, lds, lam, t0, thresh)
+        self.Mv = np.eye(N) * lam_v
+    
+class SelfCoupledNet(GapJunctionDeneveNet):
+    '''
+    Extends Gap junction net with the following changes:
+        - Mv is changed to derived diagonal matrix
+        - D matrices are rotated to basis of A
+        - A is diagonalized 
+        - Thresholds are scales by tau_s 
+    '''
+    def __init__(self, T, dt, N, D, lds, lam, t0 = 0, thresh = 'full'):
+        super().__init__(T, dt, N, D, lds, lam, t0)
+
+        
+        if np.linalg.matrix_rank(lds.A) < np.min(lds.A.shape):
+            print("Dynamics Matrix A is  not full rank, has dims (%i, %i) but rank %i"%(lds.A.shape[0], lds.A.shape[1], np.linalg.matrix_rank(lds.A)))
+            assert(False)
+        else:
+            lamA_vec, uA = np.linalg.eig(lds.A)
+            
+        # add negative eigenvector/eigenvalue to lamA/ uA
+        
+        dim = np.linalg.matrix_rank(D)
+        assert(N >= 2 * dim), "Must have at least 2 * dim neurons but rank(D) = %i and N = %i"%(dim,N)
+              
+        lamA_vec = np.concatenate((lamA_vec, lamA_vec), axis = 0)
+        uA = np.concatenate((uA, -uA), axis = 1)
+            
+        
+
+        lamA = pad_to_N_diag_matrix(lamA_vec, N)     
+        self.lamA = lamA
+        self.uA = uA
+        assert(np.all(np.imag(np.real_if_close(lamA)) == np.zeros(lamA.shape))), ('A must have real eigenvalues', lamA)
+        
+        _, sD, vDT  = np.linalg.svd(D)
+        sD = pad_to_N_diag_matrix(sD, N)
+        
+        signs = np.ones((2*dim,))
+        signs[dim:] = -1
+        decoder_signs = np.zeros((N,N))
+        decoder_signs[0:2*dim, 0:2*dim] = np.diag(signs)
+        
+
+        tau_syn = lam**-1
+        self.tau_syn = tau_syn
+
+        # implement V as curly v in notes
+        self.Mv =     tau_syn * lamA  
+        self.Mr =      (np.eye(N) +   tau_syn * lamA) 
+        
+        sD_inv = np.zeros(sD.shape)
+        for i in range(dim):
+            sD_inv[i, i]  = sD[i, i]**-1
+            sD_inv[i + dim, i + dim]  = sD[i, i]**-1
+            sD[i + dim, i + dim] = sD[i, i]
+        self.sD = sD
+  
+        self.sD_inv = sD_inv
+        uA = np.pad(uA, ((0,0),(0, N - 2 * dim)))
+        Delta = uA @ sD_inv
+        self.set_initial_rs(Delta, lds.X0)
+        
+        self.D = Delta
+            
+        self.vth = (tau_syn / 2) * np.sqrt(np.diag(Delta.T @ Delta ))
+        self.Mc = np.zeros((N, dim))
+        self.Mc[0:dim, 0:dim] = self.lds.B
+        #self.Mc[dim:2*dim, 0:dim] = self.lds.B
+        self.Mc =  sD @ self.Mc
+         
+        self.vDT = vDT
+        self.Mo =  -np.eye(N)
+        
+    
+    def run_sim(self): 
+        '''
+        process data and call c_solver library to quickly run sims
+        '''
+        @jit(nopython=True)     
+        def fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo, Mc, A_exp):
+            '''run the sim quickly using numba just-in-time compilation'''
+            N = V.shape[0]
+            for count in np.arange(num_pts-1):
+                pct =  (count+1) / num_pts
+                pct *= 100 
+                if (pct // 1) == 0: 
+                    print( pct * 100, r'%')                #get if max voltage above thresh then spike
+                diff = V[:,count] - vth
+                max_v = np.max(diff)
+                if max_v >= 0:
+                    idx = np.argmax(diff) 
+                    V[:,count] += 1 * Mo[:,idx]
+                    r[idx,count] += 1
+                    O[idx] = np.append(O[idx], t[-1])
+                
+                
+                state = np.hstack((V[:,count], r[:,count]))
+                state = A_exp @ state
+     
+                 
+                r[:,count+1] = state[N:]
+                V[:,count+1] = state[0:N] +  dt * Mc @ U[:,count]
+                
+                 
+                t[count+1] =  t[count] + dt 
+                count += 1
+                
+                
+        
+        self.lds_data = self.lds.run_sim()
+        U = self.lds_data['U']
+        vth = self.vth
+        num_pts = self.num_pts
+        dt = self.dt
+        t = np.asarray(self.t)
+        V = self.V
+        r = self.r
+        O = self.O
+        Mv = self.Mv
+        Mo = self.Mo
+        Mr = self.Mr
+        Mc = self.Mc
+        tau_syn = self.tau_syn
+        
+        top = np.hstack((Mv, Mr))
+        bot = np.hstack((np.zeros((self.N, self.N)), -np.eye(self.N)))
+        A_exp = np.vstack((top, bot)) #matrix exponential for linear part of eq
+        A_exp = expm(A_exp* dt / tau_syn)
+        
+        fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo,  Mc,  A_exp)
+
+        
+
+        if not self.suppress_console_output:
+            print('Simulation Complete.')
+        
+        return SpikingNeuralNet.run_sim(self)
 
 class SpikeDropDeneveNet(GapJunctionDeneveNet):
     
