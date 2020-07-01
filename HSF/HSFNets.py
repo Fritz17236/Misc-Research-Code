@@ -285,11 +285,6 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         dim = np.linalg.matrix_rank(D)
         assert(N >= 2 * dim), "Must have at least 2 * dim neurons but rank(D) = %i and N = %i"%(dim,N)
               
-        lamA_vec = np.concatenate((lamA_vec, lamA_vec), axis = 0)
-        uA = np.concatenate((uA, -uA), axis = 1)
-            
-        
-
         lamA = pad_to_N_diag_matrix(lamA_vec, N)     
         self.lamA = lamA
         self.uA = uA
@@ -298,12 +293,6 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         _, sD, vDT  = np.linalg.svd(D)
         sD = pad_to_N_diag_matrix(sD, N)
         
-        signs = np.ones((2*dim,))
-        signs[dim:] = -1
-        decoder_signs = np.zeros((N,N))
-        decoder_signs[0:2*dim, 0:2*dim] = np.diag(signs)
-        
-
         tau_syn = lam**-1
         self.tau_syn = tau_syn
 
@@ -314,12 +303,11 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         sD_inv = np.zeros(sD.shape)
         for i in range(dim):
             sD_inv[i, i]  = sD[i, i]**-1
-            sD_inv[i + dim, i + dim]  = sD[i, i]**-1
-            sD[i + dim, i + dim] = sD[i, i]
+
         self.sD = sD
   
         self.sD_inv = sD_inv
-        uA = np.pad(uA, ((0,0),(0, N - 2 * dim)))
+        uA = np.pad(uA, ((0,0),(0, N - dim)))
         Delta = uA @ sD_inv
         self.set_initial_rs(Delta, lds.X0)
         
@@ -328,7 +316,6 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         self.vth = (tau_syn / 2) * np.sqrt(np.diag(Delta.T @ Delta ))
         self.Mc = np.zeros((N, dim))
         self.Mc[0:dim, 0:dim] = self.lds.B
-        #self.Mc[dim:2*dim, 0:dim] = self.lds.B
         self.Mc =  sD @ self.Mc
          
         self.vDT = vDT
