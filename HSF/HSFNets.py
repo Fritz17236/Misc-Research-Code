@@ -279,49 +279,67 @@ class SelfCoupledNet(GapJunctionDeneveNet):
             assert(False)
         else:
             lamA_vec, uA = np.linalg.eig(lds.A)
-            
-        # add negative eigenvector/eigenvalue to lamA/ uA
-        
+            lamA_vec = np.concatenate((lamA_vec, lamA_vec))
+            uA = np.concatenate((uA, -1 * uA), axis = 1)
+            uA[uA == 0] = 0
+
         dim = np.linalg.matrix_rank(D)
         assert(N >= 2 * dim), "Must have at least 2 * dim neurons but rank(D) = %i and N = %i"%(dim,N)
               
         lamA = pad_to_N_diag_matrix(lamA_vec, N)     
         self.lamA = lamA
         self.uA = uA
+        
         assert(np.all(np.imag(np.real_if_close(lamA)) == np.zeros(lamA.shape))), ('A must have real eigenvalues', lamA)
         
         _, sD, vDT  = np.linalg.svd(D)
+        sD = np.concatenate((sD, sD))
         sD = pad_to_N_diag_matrix(sD, N)
         
         tau_syn = lam**-1
         self.tau_syn = tau_syn
 
         # implement V as curly v in notes
-        self.Mv =     tau_syn * lamA  
-        self.Mr =      (np.eye(N) +   tau_syn * lamA) 
+        self.Mv =  lamA  
+        
+        self.Mr = (np.eye(N) / tau_syn + lamA) 
+  
         
         sD_inv = np.zeros(sD.shape)
-        for i in range(dim):
+        for i in range(2*dim):
             sD_inv[i, i]  = sD[i, i]**-1
-
+        
         self.sD = sD
   
         self.sD_inv = sD_inv
-        uA = np.pad(uA, ((0,0),(0, N - dim)))
+        uA = np.pad(uA, ((0,0),(0, N - 2 * dim)))
+        
         Delta = uA @ sD_inv
+        
+        for i in range(2*dim):
+            Delta[:,i] /= np.linalg.norm(Delta[:,i])
+          
+        
         self.set_initial_rs(Delta, lds.X0)
         
         self.D = Delta
-            
-        self.vth = (tau_syn / 2) * np.sqrt(np.diag(Delta.T @ Delta ))
-        self.Mc = np.zeros((N, dim))
-        self.Mc[0:dim, 0:dim] = self.lds.B
-        self.Mc =  sD @ self.Mc
-         
-        self.vDT = vDT
-        self.Mo =  -np.eye(N)
         
-    
+        self.vth =  (tau_syn / 2) * np.diag(Delta.T @ Delta)
+        self.Mc = np.zeros((N,2*dim)) 
+        self.Mc[0:dim, 0:dim] = self.lds.B
+        self.Mc[dim:2*dim, dim:2*dim] = self.lds.B
+        self.Mc = self.Mc
+        self.vDT = vDT
+        self.Mo = - np.eye(N)
+        
+#         for i in range(dim):
+#             self.Mo[i+dim,i] =  self.Mo[i,i]
+#             self.Mo[i, i + dim] =  -self.Mo[i+dim, i+dim] 
+#         
+#         plt.imshow(self.Mo)
+#         plt.colorbar()
+#         plt.show()
+  
     def run_sim(self): 
         '''
         process data and call c_solver library to quickly run sims
@@ -335,30 +353,31 @@ class SelfCoupledNet(GapJunctionDeneveNet):
                 pct *= 100 
                 if (pct // 1) == 0: 
                     print( pct * 100, r'%')                #get if max voltage above thresh then spike
-                diff = V[:,count] - vth
-                max_v = np.max(diff)
-                if max_v >= 0:
-                    idx = np.argmax(diff) 
-                    V[:,count] += 1 * Mo[:,idx]
-                    r[idx,count] += 1
-                    O[idx] = np.append(O[idx], t[-1])
-                
-                
+
                 state = np.hstack((V[:,count], r[:,count]))
                 state = A_exp @ state
      
-                 
                 r[:,count+1] = state[N:]
                 V[:,count+1] = state[0:N] +  dt * Mc @ U[:,count]
                 
-                 
+                                    
+                diffs = V[:,count+1] - vth
+                for idx in range(V.shape[0]):
+                    if diffs[idx] > 0:
+                    # a spike occurred. roll back to when it should have happened 
+                        V[:,count+1] +=  tau_syn * Mo[:,idx]
+                        r[idx,count+1] +=  tau_syn
+                        O[idx] = np.append(O[idx], t[-1])
+                    
+
+                
                 t[count+1] =  t[count] + dt 
                 count += 1
-                
                 
         
         self.lds_data = self.lds.run_sim()
         U = self.lds_data['U']
+        U = np.vstack((U, -1*U))
         vth = self.vth
         num_pts = self.num_pts
         dt = self.dt
@@ -373,12 +392,12 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         tau_syn = self.tau_syn
         
         top = np.hstack((Mv, Mr))
-        bot = np.hstack((np.zeros((self.N, self.N)), -np.eye(self.N)))
+        bot = np.hstack((np.zeros((self.N, self.N)), - (1/tau_syn) *  np.eye(self.N)))
         A_exp = np.vstack((top, bot)) #matrix exponential for linear part of eq
-        A_exp = expm(A_exp* dt / tau_syn)
+        A_exp = expm(A_exp*dt)
         
         fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo,  Mc,  A_exp)
-
+                 
         
 
         if not self.suppress_console_output:
