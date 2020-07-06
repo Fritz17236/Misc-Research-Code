@@ -42,7 +42,7 @@ def run_sim(lam, N):
 
     #gj_net = GapJunctionDeneveNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0)
     #classic_net = ClassicDeneveNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, lam_v=lam_v, t0=0)
-    sc_net = SelfCoupledNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0)
+    sc_net = SelfCoupledNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0, spike_trans_prob=.3)
 
 
     #gj_data = gj_net.run_sim()
