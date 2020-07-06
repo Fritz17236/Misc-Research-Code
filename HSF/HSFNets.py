@@ -301,44 +301,34 @@ class SelfCoupledNet(GapJunctionDeneveNet):
 
         # implement V as curly v in notes
         self.Mv =  lamA  
-        
         self.Mr = (np.eye(N) / tau_syn + lamA) 
   
-        
         sD_inv = np.zeros(sD.shape)
         for i in range(2*dim):
-            sD_inv[i, i]  = sD[i, i]**-1
-        
+            sD_inv[i, i]  = sD[i, i]**-1      
         self.sD = sD
-  
         self.sD_inv = sD_inv
         uA = np.pad(uA, ((0,0),(0, N - 2 * dim)))
-        
         Delta = uA @ sD_inv
         
-        for i in range(2*dim):
-            Delta[:,i] /= np.linalg.norm(Delta[:,i])
-          
-        
         self.set_initial_rs(Delta, lds.X0)
-        
         self.D = Delta
         
         self.vth =  (tau_syn / 2) * np.diag(Delta.T @ Delta)
-        self.Mc = np.zeros((N,2*dim)) 
-        self.Mc[0:dim, 0:dim] = self.lds.B
-        self.Mc[dim:2*dim, dim:2*dim] = self.lds.B
-        self.Mc = self.Mc
+        
+        
+        lamA_inv = np.zeros(lamA.shape)
+        for i in range(2 * dim):
+            lamA_inv[i,i] = lamA[i,i]**-1
+        
+        Beta = lamA @ sD @ lamA_inv @ uA.T @ self.lds.B
+        self.Mc = Beta
+        self.Beta = Beta
+        
+        
         self.vDT = vDT
         self.Mo = - np.eye(N)
-        
-#         for i in range(dim):
-#             self.Mo[i+dim,i] =  self.Mo[i,i]
-#             self.Mo[i, i + dim] =  -self.Mo[i+dim, i+dim] 
-#         
-#         plt.imshow(self.Mo)
-#         plt.colorbar()
-#         plt.show()
+
   
     def run_sim(self): 
         '''
@@ -377,7 +367,6 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         
         self.lds_data = self.lds.run_sim()
         U = self.lds_data['U']
-        U = np.vstack((U, -1*U))
         vth = self.vth
         num_pts = self.num_pts
         dt = self.dt

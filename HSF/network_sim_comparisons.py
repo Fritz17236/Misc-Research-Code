@@ -111,7 +111,9 @@ for i in range(sc_data['x_hat'].shape[0]):
     
     #plt.plot(gj_data['t'][0:-1:plot_step], gj_data['x_hat'][i,0:-1:plot_step] - gj_data['x_true'][i,0:-1:plot_step],c='g',label='Gap Junction Network, RMSE=%.3f'%gj_err)
     #plt.plot(classic_data['t'][0:-1:plot_step], classic_data['x_hat'][i,0:-1:plot_step] - classic_data['x_true'][i,0:-1:plot_step],c='c',label='Classic Deneve Network, RMSE=%.3f'%classic_err)
-    plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][i,0:-1:plot_step] - sc_data['x_true'][i,0:-1:plot_step],c='r',label='Self Coupled Network, RMSE=%.3f'%sc_err)
+    plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][i,0:-1:plot_step]-sc_data['x_true'][i,0:-1:plot_step],c='r',label='Self Coupled Network, RMSE=%.3f'%sc_err)
+    #plt.plot(sc_data['t'][0:-1:plot_step], -sc_data['x_true'][i,0:-1:plot_step],c='r')
+    #plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][i,0:-1:plot_step],c='r')
     plt.title('Decode Error Dimension %i '%i)
     plt.legend()
     #plt.ylim([-1.1, 1.1])

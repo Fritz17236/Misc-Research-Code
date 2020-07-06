@@ -3,6 +3,7 @@ Utility Functions
 '''
 import random
 import math
+import numpy as np
 
 
 
@@ -188,10 +189,38 @@ def get_quadrant(vec):
         return sum([2**i for i in range(len(signs)) if signs[i] > 0])
         
 def rmse(a, b):
-    ''' return the root mean square error between two vectors'''
-    n = check_same_length(a, b)
-    err = vector_sum(a, multiply_by_scalar(b, -1))
-    mean_square_err = dot_product(err, err) / n
-    return math.sqrt(mean_square_err)
-     
+    '''
+    return the root mean square error between two vectors
+    if given two M x N matrices, return the rmse of their
+    MN x 1 flattened vectors
+    '''
+    npa = np.asarray(a)
+    npb = np.asarray(b)
+    n = check_same_length(npa, npb)
+    
+    assert(npa.shape == npb.shape), 'Given arguments do not have same shape. a = {0}, b = {1}'.format(a.shape, b.shape)
+    
+    mean_square_err = np.mean(np.square(npa.flatten() - npb.flatten()), axis=0)
+    
+    return np.sqrt(mean_square_err)
+    
+
+def pad_to_N_diag_matrix(vec, N):
+    '''
+    Given a vector [vec], return a N x N diagonal Numpy array
+    with [vec][i,i] along the first len(vec) entries, and
+    the remaining padded with zeros.
+    '''     
+    assert(len(list_check(vec)) <= N), " Vector length ({0}) must be less than N ({1}) ".format(len(list_check(vec)), N)
+    assert(len(list_check(vec[0])) == 1), "Vector must be a d x 1 array but the first element has size {0}".format(len(list_check(vec[0])))
+    
+    
+    
+    diag_matrix = np.zeros((N,N))
+    
+    for i in range(len(vec)):
+        diag_matrix[i,i] =vec[i]
+        
+    return diag_matrix 
+        
 
