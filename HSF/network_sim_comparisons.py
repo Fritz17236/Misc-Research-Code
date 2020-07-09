@@ -23,7 +23,6 @@ def run_sim(lam, N):
     p = .9
 
     D = gen_decoder(A.shape[0], N, mode=mode)
-    #D = gen_decoder(A.shape[0], N)
     B = np.eye(2)
     u0 = D[:,0]
     x0 = np.asarray([.5, .5])
@@ -33,27 +32,27 @@ def run_sim(lam, N):
     lam_v = 1
 
 
-    sin_func = lambda t :   np.asarray([np.sin(2*np.pi*t), np.cos(2*np.pi*t)])
+    sin_func = lambda t :   3 * np.asarray([np.sin(2 * np.pi*t), np.cos(2 * np.pi*t)]) 
 
     lds = sat.LinearDynamicalSystem(x0, A, B, u = sin_func , T = T, dt = dt)
 
-
-
-
     #gj_net = GapJunctionDeneveNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0)
     #classic_net = ClassicDeneveNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, lam_v=lam_v, t0=0)
-    sc_net = SelfCoupledNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0, spike_trans_prob=.3)
+    sc_net = SelfCoupledNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0, spike_trans_prob=1)
 
 
     #gj_data = gj_net.run_sim()
     #classic_data = classic_net.run_sim()
     sc_data = sc_net.run_sim()
 
-    return sc_data
+    return sc_data 
     #return gj_data, classic_data, sc_data
 
 #gj_data, classic_data, sc_data = run_sim(10, 4)
-sc_data = run_sim(10, 4)
+lam = 10 
+N = 4
+
+sc_data = run_sim(lam, N)
 
 
 plt.close('all')
@@ -94,7 +93,7 @@ for i in range(sc_data['x_hat'].shape[0]):
     #plt.plot(gj_data['t'][0:-1:plot_step], gj_data['x_hat'][i,0:-1:plot_step],c='g',label='Gap Junction Network')
     #plt.plot(classic_data['t'][0:-1:plot_step], classic_data['x_hat'][i,0:-1:plot_step],c='c',label='Classic Deneve Network')
     plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][i,0:-1:plot_step],c='r',label='Self Coupled Network')
-    plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_true'][i,0:-1:plot_step],c='k',label='True Dynamical System')
+    plt.plot(sc_data['t_true'][0:-1:plot_step] * lam, sc_data['x_true'][i,0:-1:plot_step],c='k',label='True Dynamical System')
     plt.title('Network Decode Dimension %i '%i)
     plt.legend()
     #plt.ylim([-1.1, 1.1])

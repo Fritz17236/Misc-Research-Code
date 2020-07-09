@@ -273,7 +273,7 @@ class SelfCoupledNet(GapJunctionDeneveNet):
     def __init__(self, T, dt, N, D, lds, lam, t0 = 0, thresh = 'full', spike_trans_prob=1):
         super().__init__(T, dt, N, D, lds, lam, t0)
 
-        assert(spike_trans_prob < 1 and spike_trans_prob > 0), "Spike transmission probability = {0] is not between 0 and 1".format(spike_trans_prob)
+        assert(spike_trans_prob <= 1 and spike_trans_prob > 0), "Spike transmission probability = {0] is not between 0 and 1".format(spike_trans_prob)
         self.spike_trans_prob=spike_trans_prob
         
         if np.linalg.matrix_rank(lds.A) < np.min(lds.A.shape):
@@ -302,8 +302,8 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         self.tau_syn = tau_syn
 
         # implement V as curly v in notes
-        self.Mv =  lamA  
-        self.Mr = (np.eye(N) / tau_syn + lamA) 
+        self.Mv =  tau_syn * lamA  
+        self.Mr = (np.eye(N) + lamA * tau_syn) 
   
         sD_inv = np.zeros(sD.shape)
         for i in range(2*dim):
@@ -313,17 +313,18 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         uA = np.pad(uA, ((0,0),(0, N - 2 * dim)))
         Delta = uA @ sD_inv
         
+        
         self.set_initial_rs(Delta, lds.X0)
         self.D = Delta
         
-        self.vth =  (tau_syn / 2) * np.diag(Delta.T @ Delta)
+        self.vth =  (1 / 2) * np.diag(Delta.T @ Delta)
         
         
         lamA_inv = np.zeros(lamA.shape)
         for i in range(2 * dim):
             lamA_inv[i,i] = lamA[i,i]**-1
         
-        Beta = lamA @ sD @ lamA_inv @ uA.T @ self.lds.B
+        Beta = tau_syn * lamA @ sD @ lamA_inv @ uA.T @ self.lds.B
         self.Mc = Beta
         self.Beta = Beta
         
@@ -357,14 +358,14 @@ class SelfCoupledNet(GapJunctionDeneveNet):
                 for idx in range(V.shape[0]):
                     if diffs[idx] > 0:
                     # a spike occurred. roll back to when it should have happened 
-                        V[:,count+1] +=  tau_syn * Mo[:,idx]
+                        V[:,count+1] +=  Mo[:,idx]
                         
                         if spike_trans_prob == 1:
-                            r[idx,count+1] +=  tau_syn
+                            r[idx,count+1] +=  1
                         else:
                             sample = np.random.uniform(0, 1)
                             if spike_trans_prob >= sample:
-                                r[idx,count+1] += tau_syn
+                                r[idx,count+1] += 1
                             
                             
                         O[idx] = np.append(O[idx], t[-1])
@@ -389,10 +390,11 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         Mr = self.Mr
         Mc = self.Mc
         tau_syn = self.tau_syn
+        dt  = dt/tau_syn
         spike_trans_prob  = self.spike_trans_prob
         
         top = np.hstack((Mv, Mr))
-        bot = np.hstack((np.zeros((self.N, self.N)), - (1/tau_syn) *  np.eye(self.N)))
+        bot = np.hstack((np.zeros((self.N, self.N)), -  np.eye(self.N)))
         A_exp = np.vstack((top, bot)) #matrix exponential for linear part of eq
         A_exp = expm(A_exp*dt)
         
