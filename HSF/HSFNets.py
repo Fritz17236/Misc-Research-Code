@@ -270,12 +270,12 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         - A is diagonalized 
         - Thresholds are scales by tau_s 
     '''
-    def __init__(self, T, dt, N, D, lds, lam, t0 = 0, thresh = 'full', spike_trans_prob=1):
+    def __init__(self, T, dt, N, D, lds, lam, t0 = 0, thresh = 'full', spike_trans_prob=1, dimensionless = True):
         super().__init__(T, dt, N, D, lds, lam, t0)
 
-        assert(spike_trans_prob <= 1 and spike_trans_prob > 0), "Spike transmission probability = {0] is not between 0 and 1".format(spike_trans_prob)
+        assert(spike_trans_prob <= 1 and spike_trans_prob >= 0), "Spike transmission probability = {0} is not between 0 and 1".format(spike_trans_prob)
         self.spike_trans_prob=spike_trans_prob
-        
+        self.dimensionless = dimensionless
         if np.linalg.matrix_rank(lds.A) < np.min(lds.A.shape):
             print("Dynamics Matrix A is  not full rank, has dims (%i, %i) but rank %i"%(lds.A.shape[0], lds.A.shape[1], np.linalg.matrix_rank(lds.A)))
             assert(False)
@@ -302,6 +302,7 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         self.tau_syn = tau_syn
 
         # implement V as curly v in notes
+        
         self.Mv =  tau_syn * lamA  
         self.Mr = (np.eye(N) + lamA * tau_syn) 
   
@@ -310,14 +311,14 @@ class SelfCoupledNet(GapJunctionDeneveNet):
             sD_inv[i, i]  = sD[i, i]**-1      
         self.sD = sD
         self.sD_inv = sD_inv
-        uA = np.pad(uA, ((0,0),(0, N - 2 * dim)))
+        uA = np.pad(uA, ((0,0),(0, N - 2 * dim)) ,mode='constant')
         Delta = uA @ sD_inv
         
         
         self.set_initial_rs(Delta, lds.X0)
         self.D = Delta
         
-        self.vth =  (1 / 2) * np.diag(Delta.T @ Delta)
+        self.vth =  (1 / 2) 
         
         
         lamA_inv = np.zeros(lamA.shape)
@@ -325,12 +326,15 @@ class SelfCoupledNet(GapJunctionDeneveNet):
             lamA_inv[i,i] = lamA[i,i]**-1
         
         Beta = tau_syn * lamA @ sD @ lamA_inv @ uA.T @ self.lds.B
-        self.Mc = Beta
-        self.Beta = Beta
-        
-        
+        self.Mc = Beta        
         self.vDT = vDT
         self.Mo = - np.eye(N)
+        
+        
+        if not self.dimensionless:
+            self.vth *= tau_syn
+            self.Mr /= tau_syn
+            self.Mc /= tau_syn
 
   
     def run_sim(self): 
@@ -338,7 +342,7 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         process data and call c_solver library to quickly run sims
         '''
         @jit(nopython=True)     
-        def fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo, Mc, A_exp, spike_trans_prob):
+        def fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo, Mc, A_exp, spike_trans_prob, dimensionless):
             '''run the sim quickly using numba just-in-time compilation'''
             N = V.shape[0]
             for count in np.arange(num_pts-1):
@@ -347,6 +351,32 @@ class SelfCoupledNet(GapJunctionDeneveNet):
                 if (pct // 1) == 0: 
                     print( pct * 100, r'%')                #get if max voltage above thresh then spike
 
+
+
+                if dimensionless:
+                    area = 1
+                else:
+                    area = tau_syn                                        
+                
+                diffs = V[:,count] - vth
+                for idx in range(V.shape[0]):
+                    if diffs[idx] > 0:
+                    # a spike occurred. roll back to when it should have happened 
+                        V[:,count] +=   area * Mo[:,idx]
+                        
+                        if spike_trans_prob == 1:
+                            r[idx,count] +=  area
+                        else:
+                            sample = np.random.uniform(0, 1)
+                            if spike_trans_prob >= sample:
+                                r[idx,count] += area
+                            
+                            
+                        O[idx] = np.append(O[idx], t[-1])
+                    
+
+
+
                 state = np.hstack((V[:,count], r[:,count]))
                 state = A_exp @ state
      
@@ -354,23 +384,7 @@ class SelfCoupledNet(GapJunctionDeneveNet):
                 V[:,count+1] = state[0:N] +  dt * Mc @ U[:,count]
                 
                                     
-                diffs = V[:,count+1] - vth
-                for idx in range(V.shape[0]):
-                    if diffs[idx] > 0:
-                    # a spike occurred. roll back to when it should have happened 
-                        V[:,count+1] +=  Mo[:,idx]
-                        
-                        if spike_trans_prob == 1:
-                            r[idx,count+1] +=  1
-                        else:
-                            sample = np.random.uniform(0, 1)
-                            if spike_trans_prob >= sample:
-                                r[idx,count+1] += 1
-                            
-                            
-                        O[idx] = np.append(O[idx], t[-1])
-                    
-
+                
                 
                 t[count+1] =  t[count] + dt 
                 count += 1
@@ -380,7 +394,6 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         U = self.lds_data['U']
         vth = self.vth
         num_pts = self.num_pts
-        dt = self.dt
         t = np.asarray(self.t)
         V = self.V
         r = self.r
@@ -390,15 +403,24 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         Mr = self.Mr
         Mc = self.Mc
         tau_syn = self.tau_syn
-        dt  = dt/tau_syn
+        dimensionless = self.dimensionless
+        dt = self.dt / tau_syn
         spike_trans_prob  = self.spike_trans_prob
+
         
+
+        if not self.dimensionless:
+            dt = self.dt 
+            bot = np.hstack((np.zeros((self.N, self.N)), -  (1/tau_syn) * np.eye(self.N)))
+                
+        else:
+            bot = np.hstack((np.zeros((self.N, self.N)), -  np.eye(self.N)))
+            
         top = np.hstack((Mv, Mr))
-        bot = np.hstack((np.zeros((self.N, self.N)), -  np.eye(self.N)))
         A_exp = np.vstack((top, bot)) #matrix exponential for linear part of eq
         A_exp = expm(A_exp*dt)
         
-        fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo,  Mc,  A_exp, spike_trans_prob)
+        fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo,  Mc,  A_exp, spike_trans_prob, dimensionless)
                  
         
 
