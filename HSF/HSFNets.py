@@ -148,8 +148,10 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         self.Mv = D.T @ lds.A @ np.linalg.pinv(D.T)
         self.Mr = D.T @ (lds.A + lam * np.eye(lds.A.shape[0])) @ D
         self.Mo = - D.T @ D
-        self.Mc = D.T @ lds.B    
-        self.O = np.asarray([[] for i in np.arange(N)])
+        self.Mc = D.T @ lds.B
+        self.max_spikes = int(1e4)       
+        self.O = np.zeros((N, self.max_spikes)) #pre allocate space for spike rasters - needed for use in Numba implementation
+        self.spike_nums = np.zeros((self.N,), dtype = np.int)
         self.vth = np.asarray(
             [ D[:,i].T @ D[:,i] for i in np.arange(N)],
             dtype = np.double
@@ -342,15 +344,18 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         process data and call c_solver library to quickly run sims
         '''
         @jit(nopython=True)     
-        def fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo, Mc, A_exp, spike_trans_prob, dimensionless):
+        def fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo, Mc, A_exp, spike_trans_prob, dimensionless, spike_nums):
             '''run the sim quickly using numba just-in-time compilation'''
             N = V.shape[0]
+            max_spikes = len(O[0,:])
+            
+            
             for count in np.arange(num_pts-1):
                 pct =  (count+1) / num_pts
                 pct *= 100 
                 if (pct // 1) == 0: 
                     print( pct * 100, r'%')                #get if max voltage above thresh then spike
-
+                    
 
 
                 if dimensionless:
@@ -371,8 +376,15 @@ class SelfCoupledNet(GapJunctionDeneveNet):
                             if spike_trans_prob >= sample:
                                 r[idx,count] += area
                             
+                        spike_num = spike_nums[idx]
+                        if spike_num >= max_spikes:
+                            print("Maximum Number of Spikes Exceeded in Simulation  for neuron ",
+                                   idx,
+                                   " having ", spike_num, " spikes with spike limit ", max_spikes)
+                            assert(False)
                             
-                        O[idx] = np.append(O[idx], t[-1])
+                        O[idx,spike_num] = t[count]
+                        spike_nums[idx] += 1
                     
 
 
@@ -398,6 +410,7 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         V = self.V
         r = self.r
         O = self.O
+        spike_nums = self.spike_nums
         Mv = self.Mv
         Mo = self.Mo
         Mr = self.Mr
@@ -420,9 +433,9 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         A_exp = np.vstack((top, bot)) #matrix exponential for linear part of eq
         A_exp = expm(A_exp*dt)
         
-        fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo,  Mc,  A_exp, spike_trans_prob, dimensionless)
+        fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo,  Mc,  A_exp, spike_trans_prob, dimensionless, spike_nums)
                  
-        
+        print(spike_nums)
 
         if not self.suppress_console_output:
             print('Simulation Complete.')

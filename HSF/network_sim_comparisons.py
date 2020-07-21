@@ -15,7 +15,7 @@ plt.rcParams['font.weight'] = 'bold'
 
 # Simulate Classic Deneve Net 
 plt.close()
-def run_sim(N, p=1):
+def run_sim(N, p=1, k = 10):
 
     A =  - np.eye(2)
 
@@ -24,17 +24,19 @@ def run_sim(N, p=1):
     lam =  1
     mode = '2d cosine'
 
-    D = gen_decoder(A.shape[0], N, mode=mode)
+    D = gen_decoder(A.shape[0], N, mode=mode) 
+    D = np.eye(N)[0:D.shape[0],:]
     B = np.eye(2)
     u0 = D[:,0]
     x0 = np.asarray([.5, .5])
     T = 40
-    dt = 1e-5
+    dt = 1e-3
 
     lam_v = 1
 
+    _, uA = np.linalg.eig(A)
 
-    sin_func = lambda t :  10 * np.asarray([np.cos( (1/4) * np.pi*t), np.sin( (1/4) * np.pi*t)])
+    sin_func = lambda t :  k * uA[:,0]#* np.asarray([np.cos( (1/4) * np.pi*t), np.sin( (1/4) * np.pi*t)])
 
     lds = sat.LinearDynamicalSystem(x0, A, B, u = sin_func , T = T, dt = dt)
 
@@ -55,7 +57,78 @@ def run_sim(N, p=1):
 #gj_data, classic_data, sc_data = run_sim(10, 4)
 lam = 1
 N = 4
-sc_data = run_sim(N, 1)
+#sc_data = run_sim(N, 1)
+
+
+def phi(c):
+    bot = -np.log(  1 - (.5 / c) )
+    return 1/bot
+
+
+
+
+ks = np.logspace(-1,1,num= 3 )
+##plt.figure()
+##plt.ylabel('phik')
+##plt.loglog(ks, phi(ks))
+##plt.xlabel('k')
+##plt.show()
+
+
+def rmse_t(xhat, xtru, ts):
+    #xhat = xhat.flatten()
+    #xtru = xtru.flatten()
+    e = (xhat - xtru) 
+    T = ts[-1] - ts[0]
+    
+    sque = np.square(e)
+    mse = np.sum(sque)  * 1e-3 / T
+    
+    
+    return np.sqrt(mse)
+
+
+
+isis = []
+rmses = []
+rates = []
+for i, k in enumerate(ks):
+    # run sim
+    sc_data = run_sim(N, 1, k = k)
+    data_len = len(sc_data['x_hat'][0,:])
+    
+##    plt.figure()
+##    plt.plot(sc_data['t'],sc_data['x_hat'][0,:],label='dim0')
+##    plt.plot(sc_data['t'],sc_data['x_hat'][1,:],label='dim1')
+##    plt.plot(sc_data['t'],sc_data['x_true'][0,:],'k',label='dim0')
+##    plt.plot(sc_data['t'],sc_data['x_true'][1,:],'r',label='dim1')
+##    plt.legend()
+##    plt.show()
+    print(sc_data['O'][0,:])
+    if i > 1:
+        assert(False)
+    rates.append(sc_data['spike_nums'][0] / (sc_data['t'][-1] - sc_data['t'][0]) )
+    rmses.append( rmse_t(sc_data['x_hat'][0,data_len // 2:], sc_data['x_true'][0,data_len // 2:], sc_data['t'][data_len // 2:] ))
+    
+
+
+
+    
+rmses = np.asarray(rmses)
+rates = np.asarray(rates)
+
+plt.figure()
+#plt.loglog(1 / phi(ks),rmses)
+plt.plot(ks, phi(ks))
+plt.plot(ks, rates, 'x')
+                 
+plt.show()
+
+
+
+
+
+
 # num_trials = 10
 # ps = np.linspace(0, 1,num=10, endpoint=True)
 # rmses = np.zeros((num_trials, len(ps)))
@@ -106,56 +179,56 @@ sc_data = run_sim(N, 1)
 # plt.savefig('membrane_potential_plot.png',bbox_inches='tight')
 #  
 #  
-plt.figure(figsize=(16,9))
-
-cbar_ticks = np.round(np.linspace( start = np.min(sc_data['V']), stop = .5,  num = 8, endpoint = True), decimals=1)
-
-plt.imshow(sc_data['V'],extent=[0,sc_data['t'][-1], 0,3],vmax=.5, vmin=np.min(sc_data['V']))
-plt.xlabel(r"Dimensionless Units of $\tau$")
-plt.axis('auto')
-cbar = plt.colorbar(ticks=cbar_ticks)
-cbar.set_label('$v_j$')
-
-plt.title('Neuron Membrane Potentials')
-plt.ylabel('Neuron #')
-plt.yticks([.4,1.15,1.85,2.6], labels=[1, 2, 3, 4])
-plt.savefig('membrane_potential_image.png',bbox_inches='tight')
- 
- 
-  
- 
-plot_step = 10
-
-
-
-
-#PLOT NETWORK DECODE, 2 DIMENSIONS ON ONE PLOT
-plt.figure(figsize=(16,9))
-plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][0,0:-1:plot_step],c='r',label='Decoded Network Estimate (Dimension 0)' )
-plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][1,0:-1:plot_step],c='g',label='Decoded Network Estimate (Dimension 1)' )
-
-plt.plot(sc_data['t_true'][0:-1:plot_step], sc_data['x_true'][0,0:-1:plot_step],c='k')
-plt.plot(sc_data['t_true'][0:-1:plot_step], sc_data['x_true'][1,0:-1:plot_step],c='k',label='True Dynamical System')
-
-plt.title('Network Decode')
-plt.legend()
-plt.ylim([-8, 8])
-plt.xlabel(r'Dimensionless Time $\tau_s$')
-plt.ylabel('Decoded State')
-plt.savefig('network_decode.png',bbox_inches='tight')
-
-#PLOT DECODE ERROR 2 DIMENSIOENS ON ONE PLOT
-plt.figure(figsize=(16,9))
-plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][0,0:-1:plot_step] - sc_data['x_true'][0,0:-1:plot_step],c='r',label='Estimation Error (Dimension 0)' )
-plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][1,0:-1:plot_step] - sc_data['x_true'][1,0:-1:plot_step],c='g',label='Estimation Error (Dimension 1)' )
-
-
-plt.title('Decode Error')
-plt.legend()
-plt.ylim([-8, 8])
-plt.xlabel(r'Dimensionless Time $\tau_s$')
-plt.ylabel('Decode Error')
-plt.savefig('decode_error.png',bbox_inches='tight')
+##plt.figure(figsize=(16,9))
+##
+##cbar_ticks = np.round(np.linspace( start = np.min(sc_data['V']), stop = .5,  num = 8, endpoint = True), decimals=1)
+##
+##plt.imshow(sc_data['V'],extent=[0,sc_data['t'][-1], 0,3],vmax=.5, vmin=np.min(sc_data['V']))
+##plt.xlabel(r"Dimensionless Units of $\tau$")
+##plt.axis('auto')
+##cbar = plt.colorbar(ticks=cbar_ticks)
+##cbar.set_label('$v_j$')
+##
+##plt.title('Neuron Membrane Potentials')
+##plt.ylabel('Neuron #')
+##plt.yticks([.4,1.15,1.85,2.6], labels=[1, 2, 3, 4])
+##plt.savefig('membrane_potential_image.png',bbox_inches='tight')
+## 
+## 
+##  
+## 
+##plot_step = 10
+##
+##
+##
+##
+###PLOT NETWORK DECODE, 2 DIMENSIONS ON ONE PLOT
+##plt.figure(figsize=(16,9))
+##plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][0,0:-1:plot_step],c='r',label='Decoded Network Estimate (Dimension 0)' )
+##plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][1,0:-1:plot_step],c='g',label='Decoded Network Estimate (Dimension 1)' )
+##
+##plt.plot(sc_data['t_true'][0:-1:plot_step], sc_data['x_true'][0,0:-1:plot_step],c='k')
+##plt.plot(sc_data['t_true'][0:-1:plot_step], sc_data['x_true'][1,0:-1:plot_step],c='k',label='True Dynamical System')
+##
+##plt.title('Network Decode')
+##plt.legend()
+##plt.ylim([-8, 8])
+##plt.xlabel(r'Dimensionless Time $\tau_s$')
+##plt.ylabel('Decoded State')
+##plt.savefig('network_decode.png',bbox_inches='tight')
+##
+###PLOT DECODE ERROR 2 DIMENSIOENS ON ONE PLOT
+##plt.figure(figsize=(16,9))
+##plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][0,0:-1:plot_step] - sc_data['x_true'][0,0:-1:plot_step],c='r',label='Estimation Error (Dimension 0)' )
+##plt.plot(sc_data['t'][0:-1:plot_step], sc_data['x_hat'][1,0:-1:plot_step] - sc_data['x_true'][1,0:-1:plot_step],c='g',label='Estimation Error (Dimension 1)' )
+##
+##
+##plt.title('Decode Error')
+##plt.legend()
+##plt.ylim([-8, 8])
+##plt.xlabel(r'Dimensionless Time $\tau_s$')
+##plt.ylabel('Decode Error')
+##plt.savefig('decode_error.png',bbox_inches='tight')
 
 #PLOT MEMBRANE POTENTIAL IMAGE OF 4 NEURONS W/ FIXED LABELS
 
