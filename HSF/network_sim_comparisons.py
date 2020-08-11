@@ -30,7 +30,7 @@ D_scale = 1
 D = D_scale * np.eye(N)[0:A.shape[0],:]
 
 sc_net = SelfCoupledNet(T=T, dt=dt, N=N, D=D, lds=lds, lam=lam, t0=0, spike_trans_prob = p, dimensionless=True)
-pcf_net = 
+
 sc_data = sc_net.run_sim() 
 
 
