@@ -134,7 +134,8 @@ class LinearDynamicalSystem(DynamicalSystemSim):
         Initialize the Linear Dynamical System. If there are any defaults, ensure they have appropriate
         dimensions. 
         '''
-        X0 = init_state  
+        X0 = init_state
+        self.x = X0  
         assert(X0.ndim == 1), "Initial State is expected to be a vector, but has %i dimensions" %self.x.ndim
         assert(X0.shape[0] == A.shape[0]), ("State vector size (%i) does not match"\
                                                 " Number of State Transition Matrix Rows (%i)" %(self.x.shape[0], A.shape[0]) )

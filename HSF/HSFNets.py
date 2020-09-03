@@ -49,7 +49,8 @@ def fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo, Mc, A_exp, spike_trans_prob, 
         diffs = V[:,count] - vth
         if one_spike_per_step:
             if np.any(diffs > 0):
-                idx = np.random.choice(np.argwhere(diffs > 0)[0])
+                idx = np.argmax(diffs > 0)
+                
                 
                 V[:,count] +=   Mo[:,idx]
                 
@@ -296,7 +297,7 @@ class ClassicDeneveNet(GapJunctionDeneveNet):
     ''' 
     def __init__(self, T, dt, N, D, lds, lam_v, t0 = 0):
         super().__init__(T, dt, N, D, lds, t0)
-        self.Mv = np.eye(N) * lam_v
+        self.Mv = -np.eye(N) * lam_v
     
 class SelfCoupledNet(GapJunctionDeneveNet):
     '''
@@ -334,6 +335,31 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         self.Mv =  lamA  
         self.Mr = (np.eye(N) + lamA) 
   
+#         sD_inv = np.zeros(sD.shape)
+#         for i in range(2*dim):
+#             sD_inv[i, i]  = sD[i, i]**-1      
+#         self.sD = sD
+#         self.sD_inv = sD_inv
+#         uA = np.pad(uA, ((0,0),(0, N - 2 * dim)) ,mode='constant')
+#         print(sD_inv.shape, uA.shape)
+#         
+#         Delta = sD_inv @ uA
+#         
+#         
+#         self.set_initial_rs(Delta, lds.X0)
+#         self.D = Delta
+#         
+#         self.vth =  (1 / 2) * np.ones((self.N,))
+#         
+#         lamA_inv = np.zeros(lamA.shape)
+#         for i in range(2 * dim):
+#             lamA_inv[i,i] = lamA[i,i]**-1
+#         
+#         Beta = sD @ uA.T @ self.lds.B
+#         self.Mc = Beta        
+#         self.vDT = vDT
+#         self.Mo = - sD @ sD @ np.eye(N)
+        
         sD_inv = np.zeros(sD.shape)
         for i in range(2*dim):
             sD_inv[i, i]  = sD[i, i]**-1      
@@ -355,6 +381,8 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         self.Mc = Beta        
         self.vDT = vDT
         self.Mo = - np.eye(N)
+        
+        
         
     def run_sim(self): 
         '''
