@@ -23,7 +23,7 @@ Helper Functions
 '''
 
 @jit(nopython=True)
-def fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo, Mc, A_exp, spike_trans_prob, spike_nums, floor_voltage=False, one_spike_per_step=True):
+def fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,   Mo, Mc, A_exp, spike_trans_prob, spike_nums, floor_voltage=False, one_spike_per_step=True):
     '''run the sim quickly using numba just-in-time compilation'''
     N = V.shape[0]
     max_spikes = len(O[0,:])
@@ -171,7 +171,7 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
         data['t_true'] = data['lds_data']['t']
         data['dec'] = self.decoherence(data['V'])
         
-        #compute error trajectory, e = dtdag @ V
+        #compute error trajectory, 
         if final:
             num_pts = len(data['t_true'])
             errs = np.zeros((data['A'].shape[0],num_pts), dtype=SpikingNeuralNet.FLOAT_TYPE)
@@ -285,7 +285,7 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         
         
         print('Starting Simulation.')
-        fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo,  Mc,  A_exp, spike_trans_prob, spike_nums)        
+        fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,  Mo,  Mc,  A_exp, spike_trans_prob, spike_nums)        
         print('Simulation Complete.')
         
         return super().run_sim()
@@ -333,56 +333,22 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         sD = pad_to_N_diag_matrix(sD, N)
         
         self.Mv =  lamA  
-        self.Mr = (np.eye(N) + lamA) 
-  
-#         sD_inv = np.zeros(sD.shape)
-#         for i in range(2*dim):
-#             sD_inv[i, i]  = sD[i, i]**-1      
-#         self.sD = sD
-#         self.sD_inv = sD_inv
-#         uA = np.pad(uA, ((0,0),(0, N - 2 * dim)) ,mode='constant')
-#         print(sD_inv.shape, uA.shape)
-#         
-#         Delta = sD_inv @ uA
-#         
-#         
-#         self.set_initial_rs(Delta, lds.X0)
-#         self.D = Delta
-#         
-#         self.vth =  (1 / 2) * np.ones((self.N,))
-#         
-#         lamA_inv = np.zeros(lamA.shape)
-#         for i in range(2 * dim):
-#             lamA_inv[i,i] = lamA[i,i]**-1
-#         
-#         Beta = sD @ uA.T @ self.lds.B
-#         self.Mc = Beta        
-#         self.vDT = vDT
-#         self.Mo = - sD @ sD @ np.eye(N)
-        
-        sD_inv = np.zeros(sD.shape)
-        for i in range(2*dim):
-            sD_inv[i, i]  = sD[i, i]**-1      
+        self.Mr = sD.T @ (np.eye(N) + lamA) @ sD
         self.sD = sD
-        self.sD_inv = sD_inv
+        self.set_initial_rs(self.D, lds.X0)
+
         uA = np.pad(uA, ((0,0),(0, N - 2 * dim)) ,mode='constant')
-        Delta = uA @ sD_inv
-        
-        self.set_initial_rs(Delta, lds.X0)
-        self.D = Delta
-        
-        self.vth =  (1 / 2) * np.ones((self.N,))
-        
-        lamA_inv = np.zeros(lamA.shape)
-        for i in range(2 * dim):
-            lamA_inv[i,i] = lamA[i,i]**-1
-        
-        Beta = lamA @ sD @ lamA_inv @ uA.T @ self.lds.B
-        self.Mc = Beta        
+        self.D = uA @ sD
+        self.vth =  np.diag(np.square(sD)) / 2
+
+        Beta = uA.T @ self.lds.B
+        self.Mc = sD @ Beta        
         self.vDT = vDT
-        self.Mo = - np.eye(N)
+        self.Mo = - np.square(sD)
         
         
+        self.V[:,0] = - self.vth 
+
         
     def run_sim(self): 
         '''
@@ -410,7 +376,7 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         A_exp = ( expm(A_exp*dt) ).astype(SpikingNeuralNet.FLOAT_TYPE)
         
         print('Starting Simulation.')
-        fast_sim(dt, vth, num_pts, t, V, r, O, U,  Mo,  Mc,  A_exp, spike_trans_prob, spike_nums, floor_voltage=True, one_spike_per_step=False)
+        fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,  Mo,  Mc,  A_exp, spike_trans_prob, spike_nums, floor_voltage=True, one_spike_per_step=False)
         print('Simulation Complete.')
         return SpikingNeuralNet.run_sim(self)
 
