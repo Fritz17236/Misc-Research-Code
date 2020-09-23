@@ -222,5 +222,12 @@ def pad_to_N_diag_matrix(vec, N):
         diag_matrix[i,i] =vec[i]
         
     return diag_matrix 
-        
+       
+def has_real_eigvals(M):
+    ''' Check whether a matrix has real or complex eigenvalues'''
+    lam, _ = np.linalg.eig(M)
+    return np.all(
+        np.imag(np.real_if_close(lam)) == np.zeros(lam.shape)
+        )
+      
 

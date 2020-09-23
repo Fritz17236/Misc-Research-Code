@@ -14,7 +14,7 @@ import numba
 from numba import jit
 from scipy.optimize import nnls
 from scipy.linalg import expm
-from utils import pad_to_N_diag_matrix
+from utils import has_real_eigvals
 import warnings
 
 
@@ -23,7 +23,7 @@ Helper Functions
 '''
 
 @jit(nopython=True)
-def fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,   Mo, Mc, A_exp, spike_trans_prob, spike_nums, floor_voltage=False, one_spike_per_step=True):
+def fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,   Mo, Mc, A_exp, spike_trans_prob, spike_nums, floor_voltage=False):
     '''run the sim quickly using numba just-in-time compilation'''
     N = V.shape[0]
     max_spikes = len(O[0,:])
@@ -45,52 +45,30 @@ def fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,   Mo, Mc, A_exp, spike_trans_p
         t[count+1] =  t[count] + dt 
         count += 1
         
-        # spike any neurons
+        # spikeneurons
         diffs = V[:,count] - vth
-        if one_spike_per_step:
-            if np.any(diffs > 0):
-                idx = np.argmax(diffs > 0)
+        if np.any(diffs > 0):
+            idx = np.argmax(diffs > 0)
+            
+            V[:,count] +=   Mo[:,idx]
+            
+            if spike_trans_prob == 1:
+                r[idx,count] +=  1
                 
+            else:
+                sample = np.random.uniform(0, 1)
+                if spike_trans_prob >= sample:
+                    r[idx,count] += 1
                 
-                V[:,count] +=   Mo[:,idx]
+            spike_num = spike_nums[idx]
+            if spike_num >= max_spikes:
+                print("Maximum Number of Spikes Exceeded in Simulation  for neuron ",
+                       idx,
+                       " having ", spike_num, " spikes with spike limit ", max_spikes)
+                assert(False)
                 
-                if spike_trans_prob == 1:
-                    r[idx,count] +=  1
-                else:
-                    sample = np.random.uniform(0, 1)
-                    if spike_trans_prob >= sample:
-                        r[idx,count] += 1
-                    
-                spike_num = spike_nums[idx]
-                if spike_num >= max_spikes:
-                    print("Maximum Number of Spikes Exceeded in Simulation  for neuron ",
-                           idx,
-                           " having ", spike_num, " spikes with spike limit ", max_spikes)
-                    assert(False)
-                    
-                O[idx,spike_num] = t[count]
-                spike_nums[idx] += 1
-        else:
-            for idx in range(V.shape[0]):
-                if diffs[idx] > 0:
-                    V[:,count] +=   Mo[:,idx]
-                    
-                    if spike_trans_prob == 1:
-                        r[idx,count] +=  1
-                    else:
-                        sample = np.random.uniform(0, 1)
-                        if spike_trans_prob >= sample:
-                            r[idx,count] += 1
-                        
-                    spike_num = spike_nums[idx]
-                    if spike_num >= max_spikes:
-                        print("Maximum Number of Spikes Exceeded in Simulation  for neuron ",
-                               idx,
-                               " having ", spike_num, " spikes with spike limit ", max_spikes)
-                        assert(False)
-                        
-                    O[idx,spike_num] = t[count]
-                    spike_nums[idx] += 1
+            O[idx,spike_num] = t[count]
+            spike_nums[idx] += 1
                 
              
 warnings.simplefilter('ignore', category = numba.errors.NumbaPerformanceWarning) # Execute after declaring fast_sim to prevent Numba Warning about contiguous arrays     
@@ -310,52 +288,122 @@ class SelfCoupledNet(GapJunctionDeneveNet):
     def __init__(self, T, dt, N, D, lds, t0 = 0, spike_trans_prob=1):
         super().__init__(T, dt, N, D, lds, t0, spike_trans_prob)
         
-        if np.linalg.matrix_rank(lds.A) < np.min(lds.A.shape):
-            print("Dynamics Matrix A is  not full rank, has dims (%i, %i) but rank %i"%(lds.A.shape[0], lds.A.shape[1], np.linalg.matrix_rank(lds.A)))
-            assert(False)
-        else:
-            lamA_vec, uA = np.linalg.eig(lds.A)
-            lamA_vec = np.concatenate((lamA_vec, lamA_vec))
-            uA = np.concatenate((uA, -1 * uA), axis = 1)
-            uA[uA == 0] = 0
-
         dim = np.linalg.matrix_rank(D)
+        
+        assert(np.linalg.matrix_rank(lds.A) == np.min(lds.A.shape)), "Dynamics Matrix A is  not full rank, has dims (%i, %i) but rank %i"%(lds.A.shape[0], lds.A.shape[1], np.linalg.matrix_rank(lds.A))
         assert(N >= 2 * dim), "Must have at least 2 * dim neurons but rank(D) = %i and N = %i"%(dim,N)
-              
-        lamA = pad_to_N_diag_matrix(lamA_vec, N)     
-        self.lamA = lamA
-        self.uA = uA
+        assert(has_real_eigvals(lds.A)), "A must have real eigenvalues"
         
-        assert(np.all(np.imag(np.real_if_close(lamA)) == np.zeros(lamA.shape))), ('A must have real eigenvalues', lamA)
+        self.__set_vth() 
+        self.__set_Mv__()
+        self.__set_Beta__()
+        self.__set_Mr__()       
+        self.__set_Mo__()
+        self.__rotate_decoder()
+        self.set_initial_rs(self.D, self.lds.X0)
+       
+    def __set_Mv__(self):
+        ''' Set the Diagonal Voltage Leak Matrix using d x d Matrix A and Neurons N
+        Assigns Mc =  N x N matrix having the top 2 d diagonals from the eigvals of A (repeated once)
+        '''
+        Mv =  np.zeros((self.N,self.N))
+        lamA_vec, _ = np.linalg.eig(self.lds.A)
+        lamA_vec = np.concatenate((lamA_vec, lamA_vec))
+        for i, lam in enumerate(lamA_vec):
+            Mv[i, i] = lam
+            
+        self.Mv = Mv
         
-        _, sD, vDT  = np.linalg.svd(D)
-        sD = np.concatenate((sD, sD))
-        sD = pad_to_N_diag_matrix(sD, N)
+    def __set_Beta__(self):
+        '''
+        Set the input matrix to the new basis. 
+        Beta = U.T B U,    
+        Assigns Beta =  N x 2d matrix, 
+        '''
+        dim = (self.D).shape[0]
+        _, sD, _ = np.linalg.svd(self.D)
+        _, uA = np.linalg.eig(self.lds.A)
         
-        self.Mv =  lamA  
-        self.Mr = sD.T @ (np.eye(N) + lamA) @ sD
-        self.sD = sD
-        self.set_initial_rs(self.D, lds.X0)
+        #sD = np.hstack((sD, sD))
+        #uA = np.hstack((uA, -uA))
+        
+        self.Mc = np.zeros((self.N, dim))
+        
+        self.Beta= uA.T @ self.lds.B @ uA
+        self.Mc[0 : dim, :] = np.diag(sD) @ self.Beta
+        self.Mc[dim : 2*dim, :] = -np.diag(sD) @ self.Beta
 
-        uA = np.pad(uA, ((0,0),(0, N - 2 * dim)) ,mode='constant')
-        self.D = uA @ sD
-        self.vth =  np.diag(np.square(sD)) / 2
-
-        Beta = uA.T @ self.lds.B
-        self.Mc = sD @ Beta        
-        self.vDT = vDT
-        self.Mo = - np.square(sD)
+        
+    def __set_Mr__(self):
+        ''' Set the Post-synaptic matrix via SVD of D
+        Assigns self.Mr = S @ (L + I) @ S.T, where D = USV.T and A =ULU.T, as an NxN matrix
+        Also Sets D = uA @ S
+        '''
+        lamA_vec, uA = np.linalg.eig(self.lds.A)
+        
+        lamA_vec = np.hstack((lamA_vec, lamA_vec))
+        uA = np.hstack((uA, -uA))
+        
+        L = np.diag(lamA_vec)
+        
+        _, S, _ = np.linalg.svd(self.D)
+        S = np.hstack((S, S))
+        
+        dim = self.D.shape[0]
+        
+        self.Mr = np.zeros((self.N, self.N))
+        self.Mr[0 : 2*dim, 0 : 2*dim] = np.diag(S) @ (np.eye(2*dim) + L) @ np.diag(S)
+        
+    def __set_Mo__(self):
+        ''' 
+        Set the Voltage Fast Reset Matrix
+        
+        Assigns self.Mo = S.T @ S where D = USV.T, as an NxN matrix
+        '''
+        
+        _, S, _ = np.linalg.svd(self.D)
+        dim = self.D.shape[0]
+        S = np.diag(np.hstack((S, S)))
+        
+        self.Mo = np.zeros((self.N, self.N))
+        self.Mo[0 : 2*dim, 0 : 2*dim] = -np.square(S)
+        
+    def __set_vth(self):
+        ''' Set the threshold voltages for the rotated neurons'''
+        _, sD, _ =  np.linalg.svd(self.D)
+        dim = self.D.shape[0]
+        sD = np.hstack((sD, sD, np.zeros((self.N - 2*dim,))))
+        self.vth = np.square(sD) / 2
+        
+    def __rotate_input(self, U):
+        '''Given a d x T time series of input, rotate to new basis uA'''
+        _, uA = np.linalg.eig(self.lds.A)
+        return  uA.T @ U
+    
+    def __rotate_decoder(self):
+        ''' Move the assigned decoder to rotated basis. overwrites self.D!'''
+        _, uA = np.linalg.eig(self.lds.A)
+        _, S, _ = np.linalg.svd(self.D)
+        
+        #uA = np.hstack((uA, -uA))
+        
+        S = np.diag(S)
+        
+        dim = self.D.shape[0]
+        
+        self.D = np.zeros((dim, self.N))
+        self.D[:,0: 2*dim] = np.hstack((uA @ S, -uA @ S))
         
         
-        self.V[:,0] = - self.vth 
-
+        
+        
         
     def run_sim(self): 
         '''
         process data and call c_solver library to quickly run sims
         '''
         self.lds_data = self.lds.run_sim()
-        U = self.lds_data['U']
+        U = self.__rotate_input(self.lds_data['U'])
         vth = self.vth
         num_pts = self.num_pts
         t = np.asarray(self.t)
@@ -370,14 +418,17 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         dt = self.dt
         spike_trans_prob  = self.spike_trans_prob
 
-        bot = np.hstack((np.zeros((self.N, self.N)), -  np.eye(self.N)))
+        bot = np.hstack((np.zeros((self.N, self.N)), -np.eye(self.N)))
         top = np.hstack((Mv, Mr))
         A_exp = np.vstack((top, bot)) #matrix exponential for linear part of eq
         A_exp = ( expm(A_exp*dt) ).astype(SpikingNeuralNet.FLOAT_TYPE)
         
         print('Starting Simulation.')
-        fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,  Mo,  Mc,  A_exp, spike_trans_prob, spike_nums, floor_voltage=True, one_spike_per_step=False)
+        fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,  Mo,  Mc,  A_exp, spike_trans_prob, spike_nums, floor_voltage=True)
         print('Simulation Complete.')
+        
+        
+        
         return SpikingNeuralNet.run_sim(self)
 
 
