@@ -204,6 +204,11 @@ def rmse(a, b):
     
     return np.sqrt(mean_square_err)
     
+def cart_to_polar(a):
+    ''' Convert numpy array a to polar coordinates'''
+    A = np.sqrt(np.real(a)**2 + np.imag(a)**2)
+    theta = np.arctan2(np.imag(a) , np.real(a))
+    return A * np.exp(1j * theta)
 
 def pad_to_N_diag_matrix(vec, N):
     '''

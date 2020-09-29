@@ -62,11 +62,11 @@ class DynamicalSystemSim(ABC):
         return sim_data
     
     def pack_data(self):
+        ''' Pack all non-hidden (prepended with _) attributes into data dictionary'''
         data = {}
-
         for d in self.__dict__:
-            data[str(d)] = self.__dict__[d]
-            
+            if str(d)[0] != '_':
+                data[str(d)] = self.__dict__[d]
         return data 
                      
     def same_sim_at_point(self, X):
@@ -76,7 +76,6 @@ class DynamicalSystemSim(ABC):
         return sim_copy
     
         
-    @abstractmethod
     def deriv(self, t, X):
         '''
         Compute the derivative of the system 
@@ -141,12 +140,12 @@ class LinearDynamicalSystem(DynamicalSystemSim):
                                                 " Number of State Transition Matrix Rows (%i)" %(self.x.shape[0], A.shape[0]) )
         self.A = A
         if u is None:
-            self.u = lambda t: np.zeros((B.shape[1],1))
-             
+            self.u = lambda t: np.zeros((B.shape[1],))
+            self.u0 = np.zeros_like(X0)
         else:
             self.u = u
-        self.u0 = self.u(0)
-        assert(self.u0.ndim == 1), "Initial Input is expected to be a vector, but has %i dimensions" %self.u.ndim
+            self.u0 = self.u(0)
+        assert((self.u0).ndim == 1), "Initial Input is expected to be a vector, but has %i dimensions" %self.u.ndim
     
         assert(B.shape[0] == A.shape[0]), "Input matrix rows (%i) should match state transition matrix rows (%i)" %(B.shape[0], A.shape[0])
         assert(B.shape[1] == len(self.u0)), "Input matrix columns (%i) should match length of provided input vector (%i)" %(B.shape[1], self.u.shape[0])
