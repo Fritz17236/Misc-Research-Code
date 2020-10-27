@@ -317,11 +317,9 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         '''
         Mv =  np.zeros((self.N,self.N))
         lamA_vec, _ = np.linalg.eig(self.lds.A)
-        lamA_vec = np.concatenate((lamA_vec, lamA_vec))
-        for i, lam in enumerate(lamA_vec):
-            Mv[i, i] = lam
-            
-        self.Mv = Mv
+        lamA_vec = np.hstack((lamA_vec, lamA_vec))
+
+        self.Mv = np.diag(lamA_vec)
         
     def __set_Beta__(self):
         '''
@@ -332,9 +330,9 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         dim = (self.D).shape[0]
         _, sD, _ = np.linalg.svd(self.D)
         _, uA = np.linalg.eig(self.lds.A)
-        
-        #sD = np.hstack((sD, sD))
-        #uA = np.hstack((uA, -uA))
+
+
+
         
         self.Mc = np.zeros((self.N, dim))
         
@@ -354,9 +352,15 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         uA = np.hstack((uA, -uA))
         
         L = np.diag(lamA_vec)
-        
+
+
+
         _, S, _ = np.linalg.svd(self.D)
-        S = np.hstack((S, S))
+
+        S = np.diag(S)
+        S = np.vstack((S, -S))
+        print(S.shape)
+        assert(False)
         
         dim = self.D.shape[0]
         
