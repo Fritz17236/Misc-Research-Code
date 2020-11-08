@@ -24,48 +24,30 @@ Helper Functions
 '''
 
 @jit(nopython=True)
-def fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,   Mo, Mc, A_exp, spike_trans_prob, spike_nums, floor_voltage=False, rotating_basis=False, ang_vels=None):
+def fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,   Mo, Mc, A_exp, spike_trans_prob, spike_nums):
     '''run the sim quickly using numba just-in-time compilation'''
     N = V.shape[0]
     max_spikes = len(O[0,:])
-    Mo0 = Mo.copy()
-    Mc0 = Mc.copy()
     for count in np.arange(num_pts-1):
-        if rotating_basis: #if angular velocity is defined (bases are rotating) apply e^(iwt) to the static complex matrices Mo, Mc
-            for j in np.arange(ang_vels.shape[0]):
-                Mo[j,:] = Mo0[j,:] * np.exp(0*1j*ang_vels[j]*t[count])
-                Mc[j,:] = Mc0[j,:] * np.exp(0*1j*ang_vels[j]*t[count])
-        else:
-            Mo = Mo0
-            Mc = Mc0 
-        
         state = np.hstack((V[:,count], r[:,count]))
         state = A_exp @ state
 
         r[:,count+1] = state[N:]
-        V[:,count+1] = state[0:N] +  dt * Mc @ U[:,count]  
-        
-        if floor_voltage:
-            for i in np.arange(N):
-                if np.abs(V[i,count+1]) < -vth[i]:
-                    V[i,count+1] = -vth[i] 
-            
+        V[:,count+1] = state[0:N] + dt * Mc @ U[:,count]
 
-        
-        # spikeneurons
-        diffs = np.abs(V[:,count+1]) - vth
+        diffs = np.real(V[:,count+1]) - vth
         if np.any(diffs > 0):
-            idx = np.argmax(diffs > 0)
+            idx = np.argmax(diffs)
             
-            V[:,count] +=   Mo[:,idx]
+            V[:,count+1] += Mo[:,idx]
             
             if spike_trans_prob == 1:
-                r[idx,count] +=  1
+                r[idx,count+1] +=  1
                 
             else:
                 sample = np.random.uniform(0, 1)
                 if spike_trans_prob >= sample:
-                    r[idx,count] += 1
+                    r[idx,count+1] += 1
                 
             spike_num = spike_nums[idx]
             if spike_num >= max_spikes:
@@ -76,11 +58,10 @@ def fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,   Mo, Mc, A_exp, spike_trans_p
                 
             O[idx,spike_num] = t[count]
             spike_nums[idx] += 1
-            
- 
-                
-        t[count+1] =  t[count] + dt 
-        count += 1       
+        t[count+1] = t[count] + dt
+        count += 1
+
+
              
 warnings.simplefilter('ignore', category = numba.errors.NumbaPerformanceWarning) # Execute after declaring fast_sim to prevent Numba Warning about contiguous arrays     
 
@@ -137,38 +118,11 @@ class SpikingNeuralNet(sat.DynamicalSystemSim):
             
         return dec
     
-    def set_initial_rs(self, D, X0, complex=False):
+    def set_initial_rs(self, D, X0):
         '''
         Use nonnegative least squares to set initial PSC/r values
         '''
-        if complex:
-            
-            Dreal = np.zeros((2*D.shape[0], 2* D.shape[1] ))
-            Dreal[0:D.shape[0],0:D.shape[1]] = np.real(D)
-            Dreal[D.shape[0]:,D.shape[1]:] = np.imag(D)
-         
-            assert(X0.ndim==1), "X0 should be a vector but had {0} dims".format(X0.ndim)
-            
-            
-            Xreal = np.zeros((2*len(X0),))
-            Xreal[0:len(X0)] = np.real(X0)
-            Xreal[len(X0):] = np.imag(X0)
-         
-            assert(self.r.shape[0]==D.shape[1]), "r0 with length {0} does not match the cols of D with shape {1}".format(self.r.shape[0], D.shape[1])
-            
-            rreal = nnls(Dreal, Xreal)[0]
-            rreal = np.linalg.pinv(Dreal) @ Xreal
-         
-            rcomplex = np.zeros((len(self.r[:,0]),),dtype = np.complex128)
-            rcomplex = rreal[0:len(rreal)//2] +  1j * rreal[len(rreal)//2:]
-                        
-       
-    
-            
-            self.r[:,0] = rcomplex
-            
-        else:
-            self.r[:,0] = nnls(D, X0)[0]
+        self.r[:,0] = nnls(D, X0)[0]
     @abstractmethod
     def pack_data(self, final=True):
         ''' Pack simulation data into dict object '''
@@ -222,7 +176,6 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
             ) / 2
         
       
-          
         self.set_initial_rs(D, lds.X0)
             
     def get_net_estimate(self):
@@ -264,7 +217,7 @@ class GapJunctionDeneveNet(SpikingNeuralNet):
         spike_nums = self.spike_nums
         
         top = np.hstack((Mv, Mr))
-        bot = np.hstack((np.zeros((self.N, self.N), dtype=SpikingNeuralNet.FLOAT_TYPE), -(np.eye(self.N)*(1 + 1j))))
+        bot = np.hstack((np.zeros((self.N, self.N), dtype=SpikingNeuralNet.FLOAT_TYPE), -(np.eye(self.N))))
         A_exp = np.vstack((top, bot)) #matrix exponential for linear part of eq
         A_exp = ( expm(A_exp* dt) ).astype(SpikingNeuralNet.FLOAT_TYPE)
         
@@ -302,15 +255,23 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         assert(np.linalg.matrix_rank(lds.A) == np.min(lds.A.shape)), "Dynamics Matrix A is  not full rank, has dims (%i, %i) but rank %i"%(lds.A.shape[0], lds.A.shape[1], np.linalg.matrix_rank(lds.A))
         assert(N >= 2 * dim), "Must have at least 2 * dim neurons but rank(D) = %i and N = %i"%(dim,N)
         assert(has_real_eigvals(lds.A)), "A must have real eigenvalues"
-        
-        self.__set_vth() 
+
+        # rotate D to same basis as A!!!!!
+
+        _, uA = np.linalg.eig(lds.A)
+
+        dim = lds.A.shape[0]
+        uD, sD, vt = np.linalg.svd(D[:,0:dim])  # svd of 1st two cols of D
+        self.sD = sD
+        self.vt = vt
+        self.__set_vth()
         self.__set_Mv__()
         self.__set_Beta__()
         self.__set_Mr__()       
         self.__set_Mo__()
+        self.set_initial_rs_rot()
         self.__rotate_decoder()
-        self.set_initial_rs(self.D, self.lds.X0)
-       
+
     def __set_Mv__(self):
         ''' Set the Diagonal Voltage Leak Matrix using d x d Matrix A and Neurons N
         Assigns Mc =  N x N matrix having the top 2 d diagonals from the eigvals of A (repeated once)
@@ -328,90 +289,105 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         Assigns Beta =  N x 2d matrix, 
         '''
         dim = (self.D).shape[0]
-        _, sD, _ = np.linalg.svd(self.D)
         _, uA = np.linalg.eig(self.lds.A)
 
-
-
-        
         self.Mc = np.zeros((self.N, dim))
         
         self.Beta= uA.T @ self.lds.B @ uA
-        self.Mc[0 : dim, :] = np.diag(sD) @ self.Beta
-        self.Mc[dim : 2*dim, :] = -np.diag(sD) @ self.Beta
 
-        
+        sD = np.diag(self.sD)
+
+        self.Mc = np.vstack((sD @ self.Beta, - sD @ self.Beta))
+
+
+
+        self.Mc = self.Mc @ self.Beta
+
     def __set_Mr__(self):
         ''' Set the Post-synaptic matrix via SVD of D
         Assigns self.Mr = S @ (L + I) @ S.T, where D = USV.T and A =ULU.T, as an NxN matrix
         Also Sets D = uA @ S
         '''
         lamA_vec, uA = np.linalg.eig(self.lds.A)
-        
-        lamA_vec = np.hstack((lamA_vec, lamA_vec))
-        uA = np.hstack((uA, -uA))
-        
         L = np.diag(lamA_vec)
 
+        S = np.diag(self.sD)
+        S = np.hstack((S, -S))
 
-
-        _, S, _ = np.linalg.svd(self.D)
-
-        S = np.diag(S)
-        S = np.vstack((S, -S))
-        print(S.shape)
-        assert(False)
-        
         dim = self.D.shape[0]
         
         self.Mr = np.zeros((self.N, self.N))
-        self.Mr[0 : 2*dim, 0 : 2*dim] = np.diag(S) @ (np.eye(2*dim) + L) @ np.diag(S)
-        
+        self.Mr[0 : 2*dim, 0 : 2*dim] = S.T @ (np.eye(dim) + L) @ S
+
     def __set_Mo__(self):
         ''' 
         Set the Voltage Fast Reset Matrix
         
         Assigns self.Mo = S.T @ S where D = USV.T, as an NxN matrix
         '''
-        
-        _, S, _ = np.linalg.svd(self.D)
+
+        lamA_vec, uA = np.linalg.eig(self.lds.A)
+        L = np.diag(lamA_vec)
+
+        S = np.diag(self.sD)
+        S = np.hstack((S, -S))
+
         dim = self.D.shape[0]
-        S = np.diag(np.hstack((S, S)))
         
         self.Mo = np.zeros((self.N, self.N))
-        self.Mo[0 : 2*dim, 0 : 2*dim] = -np.square(S)
-        
+        self.Mo[0 : 2*dim, 0 : 2*dim] = -S.T @ S
+
     def __set_vth(self):
         ''' Set the threshold voltages for the rotated neurons'''
-        _, sD, _ =  np.linalg.svd(self.D)
+
         dim = self.D.shape[0]
-        sD = np.hstack((sD, sD, np.zeros((self.N - 2*dim,))))
+        sD = np.hstack((self.sD, self.sD, np.zeros((self.N - 2*dim,))))
+
         self.vth = np.square(sD) / 2
-        
+
     def __rotate_input(self, U):
         '''Given a d x T time series of input, rotate to new basis uA'''
         _, uA = np.linalg.eig(self.lds.A)
         return  uA.T @ U
-    
+
+    def set_initial_rs_rot(self):
+        _, uA = np.linalg.eig(self.lds.A)
+
+        y0 = uA.T @ self.lds.X0
+
+
+        self.r[:,0] = nnls(self.D, y0)[0]
+
+
+
+
     def __rotate_decoder(self):
         ''' Move the assigned decoder to rotated basis. overwrites self.D!'''
         _, uA = np.linalg.eig(self.lds.A)
-        _, S, _ = np.linalg.svd(self.D)
-        
-        #uA = np.hstack((uA, -uA))
-        
-        S = np.diag(S)
-        
-        dim = self.D.shape[0]
-        
+        dim = self.lds.A.shape[0]
+        uA = np.hstack((uA, uA))
+
+
+
+        print(uA.shape)
+
         self.D = np.zeros((dim, self.N))
-        self.D[:,0: 2*dim] = np.hstack((uA @ S, -uA @ S))
-        
-        
-        
-        
-        
-    def run_sim(self): 
+        #sD = np.hstack((self.sD, -self.sD))
+        #sD = np.vstack((sD , -sD)) / 2
+        sD = self.sD
+        sD = np.diag(np.hstack((sD, -sD)))
+
+        #np.hstack((sD, -sD))
+        # sD = np.vstack((
+        #     np.hstack(( sD,  sD)),
+        #     np.hstack((sD,  -sD))
+        # ))
+
+
+        self.D = np.hstack((np.diag(self.sD), np.diag(-self.sD)))
+
+
+    def  run_sim(self):
         '''
         process data and call c_solver library to quickly run sims
         '''
@@ -429,6 +405,7 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         Mr = self.Mr
         Mc = self.Mc
         dt = self.dt
+        self.U = U
         spike_trans_prob  = self.spike_trans_prob
 
         bot = np.hstack((np.zeros((self.N, self.N)), -np.eye(self.N)))
@@ -437,7 +414,7 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         A_exp = ( expm(A_exp*dt) ).astype(SpikingNeuralNet.FLOAT_TYPE)
         
         print('Starting Simulation.')
-        fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,  Mo,  Mc,  A_exp, spike_trans_prob, spike_nums, floor_voltage=True)
+        fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr,  Mo,  Mc,  A_exp, spike_trans_prob, spike_nums)
         print('Simulation Complete.')
         
         
@@ -445,7 +422,170 @@ class SelfCoupledNet(GapJunctionDeneveNet):
         return self.pack_data()
 
 
-class ComplexSelfCoupledNet(GapJunctionDeneveNet):
+class CSelfCoupledNet(GapJunctionDeneveNet):
+    '''
+    Extends Gap junction net with the following changes:
+        - Mv is changed to derived diagonal matrix
+        - D matrices are rotated to basis of A
+        - A is diagonalized
+        - Thresholds are scales by tau_s
+    '''
+
+    def __init__(self, T, dt, N, D, lds, t0=0, spike_trans_prob=1):
+        super().__init__(T, dt, N, D, lds, t0, spike_trans_prob)
+
+        dim = np.linalg.matrix_rank(D)
+
+        assert (np.linalg.matrix_rank(lds.A) == np.min(
+            lds.A.shape)), "Dynamics Matrix A is  not full rank, has dims (%i, %i) but rank %i" % (
+        lds.A.shape[0], lds.A.shape[1], np.linalg.matrix_rank(lds.A))
+        assert (N >= 2 * dim), "Must have at least 2 * dim neurons but rank(D) = %i and N = %i" % (dim, N)
+
+        lamA, uA = np.linalg.eig(lds.A)
+
+        #for i, l in enumerate(lamA):
+        #    uA[:,i] /= np.sqrt(l)
+        #    lamA[i] = -l * np.conjugate(l)
+
+
+        self.uA = uA
+        self.lamA = lamA
+        dim = lds.A.shape[0]
+        uD, sD, vt = np.linalg.svd(D[:, 0:dim])  # svd of 1st two cols of D
+        self.sD = sD
+        self.vt = vt
+
+        self.V = self.V.astype(np.complex128)
+        self.r = self.r.astype(np.complex128)
+
+        self.__set_r_theta__()
+        self.__set_vth()
+        self.__set_Mv__()
+        self.__set_Beta__()
+        self.__set_Mr__()
+        self.__set_Mo__()
+        self.set_initial_rs_rot()
+        self.__rotate_decoder()
+
+    def __set_r_theta__(self):
+        ''' set the rotation matrix '''
+    def __set_Mv__(self):
+        ''' Set the Diagonal Voltage Leak Matrix using d x d Matrix A and Neurons N
+        Assigns Mc =  N x N matrix having the top 2 d diagonals from the eigvals of A (repeated once)
+        '''
+        Mv = np.zeros((self.N, self.N))
+        lamA_vec = np.hstack((self.lamA, self.lamA))
+        self.Mv = np.diag(lamA_vec)
+
+    def __set_Beta__(self):
+        '''
+        Set the input matrix to the new basis.
+        Beta = U.T B U,
+        Assigns Beta =  N x 2d matrix,
+        '''
+        dim = (self.D).shape[0]
+
+
+        self.Mc = np.zeros((self.N, dim), dtype = np.complex128)
+
+        self.Beta = self.uA.T@ (self.lds.B).astype(np.complex128) @ self.uA
+
+        sD = np.diag(self.sD)
+
+        self.Mc = np.vstack((sD @ self.Beta, - sD @ self.Beta))
+        self.Mc = self.Mc @ self.Beta
+
+    def __set_Mr__(self):
+        ''' Set the Post-synaptic matrix via SVD of D
+        Assigns self.Mr = S @ (L + I) @ S.T, where D = USV.T and A =ULU.T, as an NxN matrix
+        Also Sets D = uA @ S
+        '''
+        L = np.diag(self.lamA)
+        S = np.diag(self.sD)
+        S = np.hstack((S, -S))
+        dim = self.D.shape[0]
+
+        self.Mr = np.zeros((self.N, self.N), dtype=np.complex128)
+        self.Mr[0: 2 * dim, 0: 2 * dim] = S.T @ (np.eye(dim) + L) @ S
+
+    def __set_Mo__(self):
+        '''
+        Set the Voltage Fast Reset Matrix
+
+        Assigns self.Mo = S.T @ S where D = USV.T, as an NxN matrix
+        '''
+
+        S = np.diag(self.sD)
+        S = np.hstack((S, -S))
+        dim = self.D.shape[0]
+        self.Mo = np.zeros((self.N, self.N), dtype = np.complex128)
+        self.Mo[0: 2 * dim, 0: 2 * dim] = -S.T @ S
+
+    def __set_vth(self):
+        ''' Set the threshold voltages for the rotated neurons'''
+
+        dim = self.D.shape[0]
+        sD = np.hstack((self.sD, self.sD, np.zeros((self.N - 2 * dim,))))
+        self.vth = np.square(sD) / 2
+
+    def __rotate_input(self, U):
+        '''Given a d x T time series of input, rotate to new basis uA'''
+
+        return self.uA.T @ U
+
+    def set_initial_rs_rot(self):
+
+        dim = self.lds.A.shape[0]
+        S = np.hstack((np.diag(self.sD), np.diag(-self.sD), np.zeros((dim, self.N - 2 * dim))))
+
+        y0 = self.uA.T @ self.lds.X0
+        self.r[:, 0] = nnls(S, np.real(y0))[0]
+
+        # changed rs so also update vs
+        e = y0 - S.astype(np.complex128) @ (self.r[:,0])
+        self.V[:,0] =(S).astype(np.complex128).T @ e
+        print(self.V[:,0])
+
+    def __rotate_decoder(self):
+        ''' Move the assigned decoder to rotated basis. overwrites self.D!'''
+        self.D = np.hstack((np.diag(self.sD), np.diag(-self.sD)))
+
+
+
+    def run_sim(self):
+        '''
+        process data and call c_solver library to quickly run sims
+        '''
+        self.lds_data = self.lds.run_sim()
+        U = self.__rotate_input(self.lds_data['U'])
+        vth = self.vth
+        num_pts = self.num_pts
+        t = np.asarray(self.t)
+        V = self.V
+        r = self.r
+        O = self.O
+        spike_nums = self.spike_nums
+        Mv = self.Mv
+        Mo = self.Mo
+        Mr = self.Mr
+        Mc = self.Mc
+        dt = self.dt
+        self.U = U
+        spike_trans_prob = self.spike_trans_prob
+
+        bot = np.hstack((np.zeros((self.N, self.N), dtype=np.complex128), -np.eye(self.N,dtype=np.complex128)))
+        top = np.hstack((Mv, Mr))
+        A_exp = np.vstack((top, bot))  # matrix exponential for linear part of eq
+        A_exp = (expm(A_exp * dt))
+
+
+        print('Starting Simulation.')
+        fast_sim(dt, vth, num_pts, t, V, r, O, U, Mr, Mo, Mc, A_exp, spike_trans_prob, spike_nums)
+        print('Simulation Complete.')
+
+        return self.pack_data()
+
+class OLDComplexSelfCoupledNet(GapJunctionDeneveNet):
     '''
     Extends Gap junction net with the following changes:
         - Mv is changed to derived diagonal matrix
@@ -532,9 +672,7 @@ class ComplexSelfCoupledNet(GapJunctionDeneveNet):
         self.lam_bar = self.lam_2d
         self.W_d = self.u_d
         self.W_2d = self.u_2d
-        
 
-    
     def __set_Mv__(self):
         ''' Set the Diagonal Voltage Leak Matrix using d x d Matrix A and Neurons N
         Assigns Mc =  N x N matrix having the top 2 d diagonals from the eigvals of A (repeated once)
@@ -691,7 +829,7 @@ def gen_decoder(d, N, mode='random'):
             
         elif mode == '2d cosine':
             assert(d == 2), "2D Cosine Mode is only implemented for d = 2"
-            thetas = np.linspace(0, 2 * np.pi, num=N)
+            thetas = np.linspace(0, 2 * np.pi *(1 - 1 / N), num=N)
             D = np.zeros((d,N), dtype = np.float64)
             D[0,:] = np.cos(thetas)
             D[1,:] = np.sin(thetas)
@@ -700,109 +838,3 @@ def gen_decoder(d, N, mode='random'):
                 D[:,i] /= np.linalg.norm(D[:,i])
         return D
     
-    
- 
-  
-N = 4
-p= 1
-T = 20
-k = 1
-dt = 1e-3
-d = 2
-A =  np.zeros((d,d))
-A[0,1] = -1
-A[1,0] = 1 
-
-#A = -np.eye(d) 
-B = np.eye(d)
- 
-
-
-
-D = .1 * np.hstack((
-         np.eye(d),
-         np.zeros((d, N - d))
-         ))
-
-D =   .1 *gen_decoder(d, N, mode='2d cosine')
-
-plot_step = 10
-
-stim = lambda t : np.asarray([np.sin(t), np.cos(t)]) * 0 
- 
-x0 = np.asarray([.5, 0])
-lds = sat.LinearDynamicalSystem(x0, A, B, u = stim , T = T, dt = dt)
-net = ComplexSelfCoupledNet(T=T, dt=dt, N=N, D=D, lds=lds, t0=0, spike_trans_prob = p)
-data = net.run_sim()
-
-print(data['spike_nums'])
-
-# v = Sj * epsilon j 
-
-
-# for i in range(4):
-#         plt.axhline(y=data['vth'][i])
-#         diffs = np.abs(data['V'][i,:]) - data['vth'][i]
-#         print(np.any(diffs>0))
-#         #plt.plot(data['t'],np.abs(data['V'][i,:]), label='Neuron %i Voltage'%i)
-#         plt.plot(data['t'],diffs)
-# plt.legend()
-# plt.title("Neuron Membrane Potentials")
-# plt.xlabel(r"Simulation Time (Dimensionless Units of $\tau$")
-# plt.ylabel('Membrane Potential')
-#  
-
-#plt.plot(data['t'],data['r'][0,:])
-#plt.show()
-
-# print(np.max(data['O']))
-#  
-vmin = -np.min(np.real(data['vth']))
-vmax = np.max(np.real(data['vth']))
-# 
-# plt.plot(data['t'],(data['Mr']@ data['r'])[0,:])
-# plt.show()
-#          
-plt.figure()
-for i in range(1):
-    plt.plot(data['t'],np.real(data['V'][i,:]), label='Neuron %i Voltage'%i)
-    plt.plot(data['t'],np.imag(data['V'][i,:]), label='Imaginary')
-plt.legend()
-plt.title("Neuron Membrane Potentials")
-plt.xlabel(r"Simulation Time (Dimensionless Units of $\tau$")
-plt.ylabel('Membrane Potential')
-       
-plt.figure()
-cbar_ticks = np.linspace( start = vmin, stop = vmax,  num = 8, endpoint = True)
-plt.imshow(np.real(data['V']),extent=[0,data['t'][-1], 0,3],vmax=vmax, vmin=vmin)
-plt.xlabel(r"Dimensionless Units of $\tau$")
-plt.axis('auto')
-cbar = plt.colorbar(ticks=cbar_ticks)
-cbar.set_label(r'$\frac{v_j}{v_{th}}$')
-cbar.ax.set_yticklabels(np.round(np.asarray([c / vmax for c in cbar_ticks]), 2))
-plt.title('Neuron Membrane Potentials')
-plt.ylabel('Neuron #')
-plt.yticks([.4,1.15,1.85,2.6], labels=[1, 2, 3, 4])
-       
-       
-plt.figure()
-plt.plot(data['t'][0:-1:plot_step], data['x_hat'][0,0:-1:plot_step]/np.max(data['x_hat'][0,:]),c='r',label='Decoded Network Estimate (Dimension 0)' )
-plt.plot(data['t'][0:-1:plot_step], data['x_hat'][1,0:-1:plot_step]/np.max(data['x_hat'][1,:]),c='g',label='Decoded Network Estimate (Dimension 1)' )
-plt.plot(data['t_true'][0:-1:plot_step], data['x_true'][0,0:-1:plot_step],c='k')
-plt.plot(data['t_true'][0:-1:plot_step], data['x_true'][1,0:-1:plot_step],c='k',label='True Dynamical System')
-plt.title('Network Decode')
-plt.legend()
-plt.ylim([-1.1, 1.1])
-plt.xlabel(r'Dimensionless Time $\tau_s$')
-plt.ylabel('Decoded State')
-       
-plt.figure()
-plt.plot(data['t'][0:-1:plot_step], data['x_hat'][0,0:-1:plot_step] - data['x_true'][0,0:-1:plot_step],c='r',label='Estimation Error (Dimension 0)' )
-plt.plot(data['t'][0:-1:plot_step], data['x_hat'][1,0:-1:plot_step] - data['x_true'][1,0:-1:plot_step],c='g',label='Estimation Error (Dimension 1)' )
-plt.title('Decode Error')
-plt.legend()
-plt.ylim([-1.1, 1.1])
-plt.xlabel(r'Dimensionless Time $\tau_s$')
-plt.ylabel('Decode Error')
-  
-plt.show()
