@@ -235,4 +235,18 @@ def has_real_eigvals(M):
         np.imag(np.real_if_close(lam)) == np.zeros(lam.shape)
         )
       
+def is_diagonal(M):
+    ''' check if a matrix M (numpy 2d array) is diagonal.'''
+    try:
+        N = M.copy()
+        for j in range(M.shape[0]):
+            N[j, j] = 0
+        if np.all(np.isclose(N, np.zeros(N.shape))):
+            return True
+        else:
+            return False
+
+    except Exception as e:
+        print("Exception in is_diagonal:  {0}".format(e))
+        return
 
