@@ -4,7 +4,7 @@ Utility Functions
 import random
 import math
 import numpy as np
-
+import sympy
 
 
 
@@ -234,7 +234,29 @@ def has_real_eigvals(M):
     return np.all(
         np.imag(np.real_if_close(lam)) == np.zeros(lam.shape)
         )
-      
+
+
+def widen_to_N(M, N, square=True ):
+    '''
+    Given a p x q matrix, widen matrix to p x N for N > q. If N <= q do nothing.
+    If square=True, repeat along axis p to get an N x N matrix. Throws an error if square and p >= N
+    '''
+    if M.shape[1] < N:
+        M = np.hstack((
+            M, np.zeros((M.shape[0], N - M.shape[1]))
+        ))
+
+    if square:
+        if M.shape[0] == N:
+            return M
+        else:
+            assert(M.shape[0] < N), "Matrix with shape {0} cannot be padded to {1}x{2} square matrix".format(M.shape, N, N)
+            M = np.vstack((
+                M, np.zeros((N - M.shape[0], M.shape[1]))
+            ))
+
+    return M
+
 def is_diagonal(M):
     ''' check if a matrix M (numpy 2d array) is diagonal.'''
     try:
@@ -244,9 +266,54 @@ def is_diagonal(M):
         if np.all(np.isclose(N, np.zeros(N.shape))):
             return True
         else:
+            n_diags = [(i,j) for i in range(N.shape[0]) for j in range(N.shape[1]) if N[i,j] != 0 and i != j]
+            print("Matrix has nondiagonal elements at {1}".format(M, n_diags))
             return False
 
     except Exception as e:
         print("Exception in is_diagonal:  {0}".format(e))
-        return
+        return False
+
+def real_jordan_form(M):
+    '''
+     given a real square matrix M, return its real jordan form,  i.e, return J, P where
+     A = P^-1 J P,where J is either diagonal or block diagonal and real-valued
+    '''
+    assert(np.all(np.isreal(M))), "Given matrix is not real"
+    assert(M.shape[0]==M.shape[1]), "expected square matrix but had shape {0}".format(M.shape)
+    j,p = np.linalg.eig(M)
+    J = np.diag(j)
+    P = np.zeros(p.shape, dtype=np.complex128)
+    dim = M.shape[0]
+
+
+
+    for i in range(dim):
+        if np.isclose(J[i,i], 0.0):
+            continue
+
+        elif np.isreal(J[i,i]):
+            P[:, i] = p[:, i]
+
+        else:
+
+            a = np.real(J[i,i])
+            b = np.imag(J[i,i])
+            J[i, i] = a
+            J[i+1, i + 1] = a
+            J[i, i+1] = -b
+            J[i+1, i] = b
+            v= np.hstack((
+                np.real(p[:, i:i+1]),
+                np.imag(p[:, i:i+1])
+            ))
+            P[:, i:i+2] = v
+
+    assert (np.all(np.isreal(J))), "Output matrix {0} is not real".format(J)
+    assert (np.all(np.isreal(P))), "Output matrix {0} is not real".format(P)
+
+    return np.real(J), np.real(P)
+
+
+
 

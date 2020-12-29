@@ -14,7 +14,7 @@ import numba
 from numba import jit
 from scipy.optimize import nnls
 from scipy.linalg import expm
-from utils import has_real_eigvals, cart_to_polar, is_diagonal
+from utils import has_real_eigvals, cart_to_polar, is_diagonal, widen_to_N
 import warnings
 from scipy.signal import hilbert
 
@@ -435,7 +435,7 @@ class SymSelfCoupledNet(GapJunctionDeneveNet):
         self.__set_MvGJ__()
         self.__set_Mr__()
         self.__set_Mo__()
-        self.__set_vth()
+        self.__set_vth__()
         self.__set_initial_conditions__()
 
 
@@ -463,17 +463,23 @@ class SymSelfCoupledNet(GapJunctionDeneveNet):
 
     def __set_new_decoder__(self):
         ''' Set the new matrix used to decode estimate from network'''
-        zero = np.zeros(self.uA.shape)
-        I = np.eye(self.uA.shape[0])
         u2 = np.vstack((
-            np.hstack((self.uA, zero)),
-            np.hstack((zero, self.uA))
+            np.hstack((self.uA, self.zero)),
+            np.hstack((self.zero, self.uA))
         ))
         s2 = self.s * np.vstack((
-            np.hstack((I, zero)),
-            np.hstack((zero, I))
+            np.hstack((self.I, self.zero)),
+            np.hstack((self.zero, self.I))
         ))
         self.D = u2 @ s2
+
+        if self.D.shape[1] < N:
+            self.D = np.hstack((
+                self.D, np.zeros((self.D.shape[0], N - self.D.shape[1]))
+            ))
+
+        print(self.D.shape, self.N)
+
 
     def __set_MvSelf__(self):
         ''' Set the Diagonal Voltage Leak Matrix '''
@@ -626,7 +632,11 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
     def __init__(self, T, dt, N, D, lds, t0=0, spike_trans_prob=1):
         super().__init__(T, dt, N, D, lds, t0, spike_trans_prob)
 
+        self.lds_data = self.lds.run_sim()
+        self.c = self.lds_data['U']
+
         assert (self.__network_big_enough__())
+
 
 
         self.__add_second_order_vars__()
@@ -641,6 +651,7 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
         self.__set_Mu__()
         self.__set_Mo__()
         self.__set_vth__()
+        self.__set_Mcs__()
         self.__set_first_order_derivs__()
         self.__set_initial_conditions__()
 
@@ -690,6 +701,8 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
         ))
         self.D = u2 @ s2
 
+        self.D = widen_to_N(self.D, self.N, square=False)
+
     def __set_Mv__(self):
         ''' Set the Voltage Coupling Matrix '''
         ulu = self.uA.T @ self.L @ self.uA
@@ -698,8 +711,14 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
             np.hstack((ulu, self.zero)),
             np.hstack((self.zero, ulu))
         ))
+        #plt.imshow(self.Mv)
+        #plt.colorbar()
+        #plt.show()
+        if not is_diagonal(self.Mv):
+            print("Voltage Coupling is NOT diagonal")
 
-        assert(is_diagonal(self.Mv))
+
+        self.Mv = widen_to_N(self.Mv, self.N)
 
     def __set_MCa__(self):
         ''' Set the skew symmetric gap junction voltage coupling matrix'''
@@ -709,8 +728,8 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
             np.hstack((self.zero, Lamb))
         ))
         self.Lamb = Lamb
-
-        assert(is_diagonal(self.Mv))
+        assert(is_diagonal(self.MCa))
+        self.MCa = widen_to_N(self.MCa, self.N)
 
     def __set_Mr__(self):
         ''' set the slow synaptic coupling matrix'''
@@ -720,6 +739,7 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
             LamIulu @ self.II,
             -LamIulu @ self.II
         ))
+        self.Mr = widen_to_N(self.Mr, self.N)
 
     def __set_Mu__(self):
         ''' Set tilde{u} (2nd order filter) matrix'''
@@ -727,54 +747,72 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
             (self.ulu + self.I) @ self.II,
             -(self.ulu + self.I) @ self.II
         ))
+        self.Mu = widen_to_N(self.Mu, self.N)
 
     def __set_Mo__(self):
         ''' set the fast synaptic voltage coupling & self reset matrix'''
         self.Mo = self.s ** 2 * np.vstack((self.II, -self.II))
+        self.Mo = widen_to_N(self.Mo, self.N)
 
-    def __set_Beta__(self):
+    def __set_Mcs__(self):
         '''
-        Set the input matrix to the new basis.
-        Beta = U.T B U,
-        Assigns Beta =  N x 2d matrix,
+        Set input and input derivative matrices
         '''
-        dim = (self.D).shape[0]
-        _, uA = np.linalg.eig(self.lds.A)
+        Beta = self.uA.T @ self.lds.B @ self.uA
+        self.Beta = Beta
+        self.McDot = self.s * np.vstack((
+            Beta,
+            -Beta
+        ))
 
-        self.Mc = np.zeros((self.N, dim))
+        utklu = self.uA.T @ (self.K - self.L) @  self.uA
+        self.Mc = self.s * np.vstack((
+            utklu @ Beta,
+            -utklu @ Beta
+        ))
 
-        self.Beta = uA.T @ self.lds.B @ uA
 
-        sD = np.diag(self.sD)
 
-        self.Mc = np.vstack((sD @ self.Beta, - sD @ self.Beta))
-
-        self.Mc = self.Mc @ self.Beta
+        self.Mc = widen_to_N(self.Mc.T, self.N, square=False).T
+        self.McDot = widen_to_N(self.McDot.T, self.N, square=False).T
 
     def __set_vth__(self):
         ''' Set the threshold voltages'''
-        I = np.eye(self.L.shape[0])
-        II = np.hstack((I, -I)) / 2
         self.vth = np.asarray([
-            np.linalg.norm(II @ self.D[:, j]) / 2
+            np.linalg.norm(self.D[:,j].T @ np.vstack((self.II, -self.II)) @ self.D[:, j]) / 2
             for j in range(self.N)
         ])
 
     def __set_first_order_derivs__(self):
         ''' set the first order derivative matrices for computing initial condition v_dot(0)'''
-        D = self.D
+        D = self.s * np.eye(2 * self.dim)
         D_inv = np.linalg.pinv(D.T)
-        self.fd_Mv = D.T @ self.II.T @ (self.L + self.K) @ self.II @ D_inv
-        self.fd_Mr = D.T @ self.II.T @ (self.L + self.K + np.eye(self.dim)) @ self.II @ D
-        self.fd_Mu = D.T @ self.II.T @ self.II @ D
+        self.fd_Mv = widen_to_N(D.T @ self.II.T @ (self.L + self.K) @ self.II @ D_inv, self.N)
+        self.fd_Mr = widen_to_N(D.T @ self.II.T @ (self.L + self.K + np.eye(self.dim)) @ self.II @ D, self.N)
+        self.fd_Mu = widen_to_N(D.T @ self.II.T @ self.II @ D, self.N)
 
     def __set_initial_conditions__(self):
         ''' Set initial V and r so that network estimate is initial condition of dynamical system'''
         self.r[:, 0] = nnls(self.II @ self.D, self.lds.X0)[0]
-        self.us[:, 0] = self.r[:, 0]
+
         xHat0 = self.II @ self.D @ self.r[:, 0]
         assert (np.all(np.isclose(self.lds.X0, xHat0)))
-        self.v_dots[:, 0] = (self.fd_Mv @ self.V[:, 0] + self.fd_Mr @ self.r[:, 0] - self.fd_Mu @ self.us[:, 0])
+
+        errDot0 = (
+                self.uA.T @ (self.L + self.K) @ self.uA @ self.lds.X0
+                + self.Beta @ self.uA.T @ self.c[:,0]
+                + self.s * self.II @ self.r[:,0]
+        )
+
+        self.us[:, 0] = nnls(self.s * self.II, errDot0)[0]
+
+        # c0 = self.lds.A @ self.B @ self.c[:, 0]
+        # c0 = self.D.T @ np.hstack((c0, -c0))
+        # self.v_dots[:, 0] = (self.fd_Mv @ self.V[:, 0] + self.fd_Mr @ self.r[:, 0] - self.fd_Mu @ self.us[:, 0]) + c0
+
+        #self.v_dots[0:2,0] += 1
+        #self.v_dots[2:, 0] -= 1
+
 
     def get_net_estimate(self):
         ''' Get the network estimate by decoding activity'''
@@ -786,7 +824,7 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
         '''
 
         @jit(nopython=True)
-        def fast_sim(dt, vth, num_pts, t, v_dots, V, r, us, O, Mo, state_transition, spike_nums):
+        def fast_sim(dt, vth, num_pts, t, v_dots, V, r, us, O, Mo, Mc, McDot, state_transition, spike_nums, input):
             '''run the sim quickly using numba just-in-time compilation'''
             N = V.shape[0]
             max_spikes = len(O[0, :])
@@ -794,7 +832,7 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
 
                 state = np.hstack((v_dots[:, count], V[:, count], r[:, count], us[:, count]))
                 state = state_transition @ state
-                v_dots[:, count + 1] = state[0:N]
+                v_dots[:, count + 1] = state[0:N] + dt * Mc @ input[:, count]
                 V[:, count + 1] = state[N:2 * N]
                 r[:, count + 1] = state[2 * N:3 * N]
                 us[:, count + 1] = state[3 * N:]
@@ -817,7 +855,7 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
                 t[count + 1] = t[count] + dt
                 count += 1
 
-        self.lds_data = self.lds.run_sim()
+        input = self.c
         vth = self.vth
         num_pts = self.num_pts
         t = np.asarray(self.t)
@@ -832,8 +870,11 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
         Mo = self.Mo
         Mr = self.Mr
         Mu = self.Mu
+        McDot = self.McDot
+        Mc = self.Mc
         dt = self.dt
-        ##self.U = U
+
+        print("RUN SIM HAS NOT IMPLEMENTED DERIVATIVE OF INPUT")
 
         #          [N,    N, N, N]
         # state is [vdot, v, r, u] <==>[ Mv1, Mv2, -I, -I]
@@ -841,15 +882,15 @@ class SecondOrderSymSCNet(GapJunctionDeneveNet):
         IN = np.eye(self.N)
 
         v_double_dot = np.hstack((Mv, MCa, Mr, Mu))
+
         v_dot = np.hstack((IN, zeroN, zeroN, zeroN))
         r_dot = np.hstack((zeroN, zeroN, -IN, IN))
         u_dot = np.hstack((zeroN, zeroN, zeroN, -IN))
 
         state_transition = np.vstack((v_double_dot, v_dot, r_dot, u_dot))
         state_transition = expm(state_transition * dt)
-
         print('Starting Simulation.')
-        fast_sim(dt, vth, num_pts, t, v_dots, V, r, us, O, Mo, state_transition, spike_nums)
+        fast_sim(dt, vth, num_pts, t, v_dots, V, r, us, O, Mo, Mc, McDot, state_transition, spike_nums, input)
         print('Simulation Complete.')
 
         return self.pack_data()
@@ -963,6 +1004,7 @@ class CSelfCoupledNet(GapJunctionDeneveNet):
 
         self.uA_tilde = self.uA
         # u s rtheta uinv = a
+
     def __set_Mv__(self):
         ''' Set the Diagonal Voltage Leak Matrix using d x d Matrix A and Neurons N
         Assigns Mc =  N x N matrix having the top 2 d diagonals from the eigvals of A (repeated once)

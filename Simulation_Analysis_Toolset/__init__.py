@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from scipy.signal import find_peaks
+from scipy.linalg import expm
 from abc import ABC, abstractmethod 
 import cmath
  
@@ -43,12 +44,15 @@ class DynamicalSystemSim(ABC):
         Returns a dictionary that contains all parameters assigned to 
         the class instance (such as T, X0, etc)
         '''
+
+
+
         data =  solve_ivp(
             self.deriv,   # Derivative function
             (self.t0, self.T),       # Total time interval
             self.X0,  # Initial State
             t_eval = np.linspace(self.t0, self.T, num = int(np.floor(((self.T - self.t0)/self.dt)))),  # Returned evaluation time points
-            method='LSODA',  #Radau solver for stiff systems
+            method='RK45',
             dense_output=True,
             events = event
             )
@@ -168,8 +172,30 @@ class LinearDynamicalSystem(DynamicalSystemSim):
         
     def run_sim(self, event=None):
         #generate input for each timestep
-        
-        data =  DynamicalSystemSim.run_sim(self, event=event)
+
+
+
+
+
+        if event == None:
+            ts = np.linspace(self.t0, self.T + self.dt, num=int(np.floor(((self.T - self.t0)/self.dt))))
+            dim = self.X0.shape[0]
+            state = np.zeros((dim, len(ts)))
+            state[:, 0] = self.X0
+
+            matrixExp = expm(self.A * self.dt)
+            for i in np.arange(len(ts)-1):
+                state[:,i+1] = matrixExp @ state[:, i] + self.dt * self.B @ self.u(ts[i])
+
+            data = self.pack_data()
+            data['X'] = state
+            data['t'] = ts
+
+
+        else:
+            data = DynamicalSystemSim.run_sim(self, event=event)
+
+
         U = np.zeros((self.B.shape[1], len(data['t'])))
         for i in np.arange(len(data['t'])):
             U[:,i] = self.u(data['t'][i])
