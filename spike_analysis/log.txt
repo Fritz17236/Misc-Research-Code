@@ -1,0 +1,22 @@
+error loading session SC033_20191114_142520_s33
+Can't read data (addr overflow, addr = 4096, size = 3136, eoa = 2048)
+error loading session SC038_20191120_115527_s6
+'dict' object has no attribute '_name'
+error loading session SC043_20200921_162104_s29
+'dict' object has no attribute '_name'
+error loading session SC043_20200922_135318_s24
+'dict' object has no attribute '_name'
+error loading session SC066_20210415_121842_s8
+'dict' object has no attribute '_name'
+error loading session SC067_20210413_150250_s23
+'dict' object has no attribute '_name'
+error loading session SC067_20210414_153241_s24
+'dict' object has no attribute '_name'
+error loading session SC033_20191114_142520_s33
+Can't read data (addr overflow, addr = 4096, size = 3136, eoa = 2048)
+error loading session SC033_20191114_142520_s33
+Can't read data (addr overflow, addr = 4096, size = 3136, eoa = 2048)
+error loading session SC033_20191114_142520_s33
+Can't read data (addr overflow, addr = 4096, size = 3136, eoa = 2048)
+error loading session SC033_20191114_142520_s33
+'Dataset' object has no attribute 'copy'
