@@ -149,7 +149,7 @@ class Session(PersistentObject):
 
     """
 
-    def __init__(self, name, root='.'):
+    def __init__(self, name, root='.', verbose=False):
         """
         Construct a session object.
 
@@ -158,6 +158,7 @@ class Session(PersistentObject):
         :param root: Directory containing session's saved data
         """
         super().__init__(name, root)
+        self.verbose=verbose
         self._data_path = os.path.join(self._dir, "data")
 
     def add_data(self, file_name, file_directory, **kwargs):
@@ -182,7 +183,8 @@ class Session(PersistentObject):
 
             #  Raw File I/O
             if self.contains(file_name):
-                print("Session already contains data from {0} - skipping.".format(file_name))
+                if self.verbose:
+                    print("Session already contains data from {0} - skipping.".format(file_name))
                 return
 
             file_path = os.path.join(file_directory, file_name)
@@ -354,7 +356,6 @@ class Session(PersistentObject):
                                " within this session: {1}".format(region, self.get_session_brain_regions()))
 
 
-
     def compute_firing_rate_pca_by_brain_region(self, num_pcs=2):
         """
         Perform Principal Component Analysis on stored Firing Rates, Splitting by brain region
@@ -368,11 +369,13 @@ class Session(PersistentObject):
         with h5py.File(self._data_path, "r") as data_handle:
 
             regions = self.get_session_brain_regions()
-            print("Performing Principal Component Analysis...", end='')
+            if self.verbose:
+                print("Performing Principal Component Analysis...", end='')
 
             # check if pcs already exist, if so delete and recompute
             if "pca_projections" in data_handle.keys() and "pca_components" in data_handle.keys():
-                print("PCA Already Performed on Session {0} - skipping.".format(self._name))
+                if self.verbose:
+                    print("PCA Already Performed on Session {0} - skipping.".format(self._name))
                 return
             for region in regions:
                 frs = self.get_firing_rates(region=region)

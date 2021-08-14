@@ -9,48 +9,49 @@ import matplotlib.pyplot as plt
 from containers import Session
 
 
-def get_session_name_dict(file_name_list):
-    """
-    Organize a file_name list into sessions.
-
-    Given a list of file names, organize them by session into a dictionary. The dictionary keys
-    are the names of the session, and the dictionary values are a list of  names of files associated with that session.
-    :param file_name_list:
-    :return: session_name_dict
-    """
-    session_name_dict = defaultdict(list)
-    for fname in file_name_list:
-        split_name = fname.split('_')
-        mat_header = split_name[0]
-        session_name = split_name[1] + "_" + split_name[2] + "_" + split_name[3] + "_" + split_name[4]
-        match_pattern = mat_header + "_" + session_name
-
-        for file_name in file_name_list:
-            if file_name.startswith(match_pattern) and file_name not in session_name_dict[session_name]:
-                session_name_dict[session_name].append(file_name)
-    return session_name_dict
-
-
-def load_all_session_data():
+def load_all_session_data(verbose=False):
     """
     Load all session data, pre-processing (including PCA w/ 2 components) if necessary
 
     :return: session_data dictioanry object with keys being session names, and values being Session Instances.
     """
 
-    print("Loading Session Data...")
+    def get_session_name_dict(file_name_list):
+        """
+        Organize a file_name list into sessions.
+
+        Given a list of file names, organize them by session into a dictionary. The dictionary keys
+        are the names of the session, and the dictionary values are a list of  names of files associated with that session.
+        :param file_name_list:
+        :return: session_name_dict
+        """
+        session_name_dict = defaultdict(list)
+        for fname in file_name_list:
+            split_name = fname.split('_')
+            mat_header = split_name[0]
+            session_name = split_name[1] + "_" + split_name[2] + "_" + split_name[3] + "_" + split_name[4]
+            match_pattern = mat_header + "_" + session_name
+
+            for file_name in file_name_list:
+                if file_name.startswith(match_pattern) and file_name not in session_name_dict[session_name]:
+                    session_name_dict[session_name].append(file_name)
+        return session_name_dict
+    if verbose:
+        print("Loading Session Data...")
 
     session_names = get_session_name_dict(os.listdir(DIR_RAW))
     session_data = {}
 
     for idx_session, (session_name, files) in enumerate(session_names.items()):
-        print("\nprocessing session {0}/{1}...".format(idx_session + 1, len(session_names.keys())))
+        if verbose:
+            print("\nprocessing session {0}/{1}...".format(idx_session + 1, len(session_names.keys())))
 
         #create session instance to store data
         try:
-            sess = Session(name=session_name, root=DIR_SAVE)
+            sess = Session(name=session_name, root=DIR_SAVE, verbose=verbose)
             for j, file_name in enumerate(files):
-                print("\tadding file {0}/{1}".format(j + 1, len(files)))
+                if verbose:
+                    print("\tadding file {0}/{1}".format(j + 1, len(files)))
 
                 # create session object with given name, data saved in DIR_SAVE declared in constants.py
                 sess.add_data(file_name=file_name, file_directory=DIR_RAW)
@@ -68,8 +69,8 @@ def load_all_session_data():
                 print(e, file=log)
                 raise
 
-
-    print("Session Data Loaded.")
+    if verbose:
+        print("Session Data Loaded.")
     return session_data
 
 
@@ -225,4 +226,47 @@ def plot_pc_cross_correlation_analysis(session, pc_ref, pc_name, save_dir):
         plt.close("all")
 
 # Multi-Session Scripts
+
+def get_all_session_brain_regions(session_data_dict):
+    """
+    Get a list of all brain regions present a set of sessions.
+
+    :param session_data_dict: Dictionary with keys = session name, and value = Session instance.
+    (output of load_all_session_data)
+    :type session_data_dict: dict
+    :return: brain_regions a list of brain regions contained within session data.
+
+    """
+    brain_regions_set = set()
+
+    for sess_name, sess_data in session_data_dict.items():
+        regions = sess_data.get_session_brain_regions()
+        for r in regions:
+            brain_regions_set.add(r)
+    return brain_regions_set
+
+
+def get_all_brain_region_pairs(brain_regions_set):
+    """
+    Get all pairwise combinations of a list of brain regions, excluding a region paired with itself.
+
+    :param brain_regions_set:
+    :return: brain_region_pairs list of pairs of brain regions (note pair(A, B) == pair(B,A) for two regions A,B.
+    """
+    brain_region_pairs = []
+
+    for region_A in brain_regions_set:
+        for region_B in brain_regions_set:
+            if (region_A == region_B) or (region_B, region_A) in brain_region_pairs:
+                continue
+            else:
+                brain_region_pairs.append((region_A, region_B))
+    return brain_region_pairs
+
+
+# get all session regions (set)
+
+# get all pairs of brain regions
+
+# get names of all sessions that contain both pairs
 
