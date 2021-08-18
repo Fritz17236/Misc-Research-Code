@@ -1,14 +1,15 @@
-import os
+"""
+utils.py Various utility functions, not all currently used.
+
+"""
 
 import numpy as np
 import math
-
-
-from constants import TIME_END_DEFAULT, TIME_BEGIN_DEFAULT, DT_DEFAULT, BIN_WIDTH_DEFAULT
+from constants import TIME_END_DEFAULT, TIME_BEGIN_DEFAULT, BIN_WIDTH_DEFAULT
+import matplotlib.pyplot as plt
 import scipy.io as spio
 import tqdm
 from scipy.signal import welch
-import matplotlib.pyplot as plt
 
 
 def get_bin_edges(t_start, t_end, width):
@@ -120,8 +121,159 @@ def get_session_firing_rates(session, t_start=TIME_BEGIN_DEFAULT, t_end=TIME_END
 
     print("done.")
     return ts, frs
-# region old code
 
+
+def plot_data(x, y, **kwargs):
+    """
+
+    :param x: 1d numpy array specifying the independent variable (x-axis) to plo9t
+    :param y: either 1d array specifying dependent variable (y-axis) or if two_dim=True, is a two-dimensional
+        numpy array, and second axis (with length y.shape[1]) is averaged.
+    :param title:
+    :param kwargs:
+        two_dim: true if plotting a 2d numpy array with averaging
+        fill_error: if two_dim is true, then the standard deviation and +/- the Standard error of the mean is plotted
+            around the mean
+        color: specify the color of a curve (string)
+        fig_name: name of the figure generated, also can be used to plot multiple figures at once (string)
+        xlabel: set the x-axis label (string)
+        ylabel: set the y-axis label (string)
+        xlim: set x limits (2-tuple or 2-list)
+        ylim: set y limits(2-tuple or 2-list)
+        legend: add a legend (bool)
+        save_path: save the figure at a given path (string)
+        title: set the figure title (string)
+        show: show the figure (bool)
+        label: label the plotted time series
+        line_at_zero: insert a vertical line at x=0
+        figsize: specify the size of the figure (units?)
+        vline: draw a vertical line at a given x value
+        hlin: draw a horizontal line at a given y value
+
+    :return: figure : handle to the generated figure
+    """
+    valid_args = ["two_dim", "fill_error", "color",
+                  "fig_name", "xlabel", "ylabel",
+                  "xlim", "ylim", "legend",
+                  "save_path", "title", "show", "label", "vline", "hline", "figsize"]
+
+    for val in kwargs.keys():
+        assert(val in valid_args), "Keyword Argument \'{0}\' not a valid argument".format(val)
+
+    assert (x.shape[0] == y.shape[0]), "x and y to have compatible shapes, but first dimensions" \
+                                       " are {0} and {1}".format(x.shape[0], y.shape[0])
+
+
+
+    if "title" in kwargs:
+        fig = plt.figure(kwargs["title"])
+        plt.title(kwargs["title"])
+
+    else:
+        fig = plt.figure()
+
+    if "figsize" in kwargs:
+        fig.set_size_inches(kwargs["figsize"])
+
+    if "two_dim" in kwargs:
+        assert (x.shape[0] == y.shape[0]), "x and y expected to have compatible shapes, but first dimensions" \
+                                           " are {0} and {1}".format(x.shape[0], y.shape[0])
+        lines = plt.plot(x, np.mean(y, axis=1))
+
+    else:
+        assert(x.shape == y.shape), "x and y expected to have same shapes but shape(x)={0} and shape(y)={1}" \
+                                    "".format(x.shape, y.shape)
+        lines = plt.plot(x, y)
+
+    if "fill_error" in kwargs:
+        if "two_dim" in kwargs:
+            error = np.std(y, axis=1) / np.sqrt(y.shape[1])
+            y = np.mean(y, axis=1)
+            lines.append(plt.fill_between(x, y - error, y + error, alpha=.3))
+        else:
+            lines.append(plt.fill_between(x, y - kwargs["fill_error"], y + kwargs["fill_error"], alpha=.3))
+
+    if "vline" in kwargs:
+        plt.axvline(x=kwargs["vline"], c='k')
+
+    if "hline" in kwargs:
+        plt.axhline(y=kwargs["hline"], c='k')
+
+    if "color" in kwargs:
+        for line in lines:
+            line.set_color(kwargs["color"])
+
+    if "label" in kwargs:
+        lines[0].set_label(kwargs["label"])
+
+    if "xlabel" in kwargs:
+        plt.xlabel(kwargs["xlabel"])
+
+    if "ylabel" in kwargs:
+        plt.ylabel(kwargs["ylabel"])
+
+    if "xlim" in kwargs:
+        plt.xlim(kwargs["xlim"])
+
+    if "ylim" in kwargs:
+        plt.ylim(kwargs["ylim"])
+
+    if "legend" in kwargs:
+        plt.legend()
+
+    if "save_path" in kwargs:
+        plt.savefig(kwargs["save_path"], dpi=128, bbox_inches='tight')
+
+    if "show" in kwargs:
+        plt.show()
+
+
+def pad_spike_times(spike_times, max_num_spikes=None):
+    """
+    Pad a ragged spike times array to a 3d numpy array of fixed size
+
+    :param spike_times: nested ragged array of shape [num_neurons][num_trials][variable num spikes]
+    :param max_num_spikes: specify a pad width along the number of spikes dimension (3). If none, it's computed as the
+    maximum number of spikes within spike times along all trials and neurons.
+    :return: spike_times_padded: 3d array of shape [num_neurons][num_trials][max_num_spikes]
+    """
+    num_neurons = spike_times.shape[0]
+    num_trials = spike_times.shape[1]
+
+    # def boolean_indexing(v, fillval=np.nan):
+    #     out = np.full(mask.shape, fillval)
+    #     out[mask] = np.concatenate(v)
+    #     return out
+    # return boolean_indexing(spike_times, fillval=0)
+
+
+    if not max_num_spikes:
+        max_num_spikes = max([len(spike_times[i][j]) for i in range(num_neurons) for j in range(num_trials)])
+
+    import time
+    start = time.time()
+
+    spike_times_padded = np.zeros((num_neurons, num_trials, max_num_spikes))
+    mask = spike_times.nonzero()
+    print(mask.shape)
+    print(spike_times.shape)
+    print(spike_times_padded.shape)
+
+    spike_times_padded[mask] = spike_times
+
+    end = time.time()
+    print("Time to pad = {0}".format(end-start))
+    exit(0)
+
+    return spike_times_padded
+    for idx_trial in range(num_trials):
+        for idx_neuron in range(num_neurons):
+            arr_len = len(spike_times[idx_neuron][idx_trial])
+            spike_times_padded[idx_neuron, idx_trial, :arr_len] = spike_times[idx_neuron][idx_trial]
+
+    return spike_times_padded
+
+# region old code
 
 def kernel_gaussian(t, sigma=.05):
     '''
@@ -346,7 +498,7 @@ def get_psd(x, fs):
     # Pxx = X * np.conj(X)
     # freqs = np.fft.fftfreq(n=len(x), d=1 / fs)
     assert(x.ndim==1), "Given vector should only 1 dimension but had shape {0}".format(x.shape)
-    freqs, Pxx = welch(x, fs=fs, nfft=len(x), detrend=None, scaling='spectrum', return_onesided=True)
+    freqs, Pxx = welch(x, fs=fs, nfft=len(x),nperseg=len(x)//4,  detrend=None, scaling='spectrum', return_onesided=True)
 
     return freqs, Pxx
 
@@ -469,14 +621,48 @@ def filter_by_firing_rate(firing_rates, threshold=1):
 
 #endregion
 
-def spike_train_cch(trig, ref):
+def spike_train_cch(trig, ref, rng, bin_width, return_lags=False):
     """
     Compute the spike train cross-correlation histogram
 
     :param trig: trigger spike train array
     :param ref:  reference spke train array
-    :return: (lags, counts)
+    :param bin_width: (s) the width of the histogram bins
+    :param rng: (int) number of bins to compute cch over, cch lag times are in the interval +/- bin_width * range
+    :return: (lags, counts), length M+1 where M is rng
     """
+
+    # bin_edges = get_bin_edges(t_start=TIME_BEGIN_DEFAULT, t_end=TIME_END_DEFAULT, width=bin_width)
+    # trig_counts = bin_spikes(trig, bin_edges)
+    # ref_counts = bin_spikes(ref, bin_edges)
+    # corrs = np.correlate(trig_counts, ref_counts, mode='same')
+    # M_idxs = np.arange(-rng, rng + 1) + len(corrs) // 2
+    #
+    # if return_lags:
+    #     lags = ts_to_acorr_lags(bin_edges[1:] - bin_width) # causal estimation (rate computed looking back)
+    #
+    #     return lags[M_idxs], corrs[M_idxs]
+    # else:
+    #     return corrs[M_idxs]
+    cch = np.zeros((2 * rng + 1,))
+    for j, spike in enumerate(trig):
+        bin_edges = spike + bin_width * np.arange(-rng - 1, rng + 1)
+        cch += np.histogram(a=ref, bins=bin_edges, range=(np.min(bin_edges), np.max(bin_edges)))[0]
+
+    lags = bin_width * np.arange(-rng, rng + 1)
+    #
+    # M_idxs = np.arange(-rng, rng+1) + len(lags_2)//2
+    # plt.figure()
+    # plt.bar(lags_2[M_idxs], np.correlate(trig_counts, ref_counts, mode='same')[M_idxs], label='np corr', width=-bin_width, align="edge")
+    # plt.bar(lags, cch, label='Manual', width=-bin_width, align="edge", alpha=.3)
+    # plt.legend()
+    # plt.show()
+    #
+    if return_lags:
+        return lags, cch
+    else:
+        return cch
+
 
 
 

@@ -1,26 +1,36 @@
+"""
+containers.py Class definitions for persistent data storage with speedy access.
+"""
+
 import os
 import h5py
 import numpy as np
+
+import utils
 from constants import ENUM_LICK_LEFT, ENUM_LICK_RIGHT, ENUM_NO_LICK, THRESHOLD_FIRING_RATE_MIN
 from utils import get_session_firing_rates, load_mat, filter_by_firing_rate
 from sklearn.decomposition import PCA
 
 
+# Wrapper function used when accessing data
 def access_hd5(func):
     def _wrapper_access_hd5_check(*args, **kwargs):
         try:
-
             return func(*args, **kwargs)
         except KeyError:
             print("No data found. Ensure data loaded into session.")
             raise
+
     return _wrapper_access_hd5_check
+
 
 class PersistentObject:
     """
-    The persistent object class is used to store objects in structured directories
-    in nonvolatile memory.
+    Store data in a structured directory.
 
+    The persistent object class is used to store objects in structured directories
+    in nonvolatile memory. It also keeps track of files that have been added to prevent
+    needless addition, duplication, or unintended overwriting.
     """
     EXT_FILE_RECORD = ".record"
 
@@ -136,13 +146,6 @@ class PersistentObject:
             self._record_handle.close()
 
 
-# TODO: handle files individually:
-#    for saving: get all fields from a given file, store them in a single data file
-#   for loading: just get a handle to the file, store that files fields in  data file
-#   when calling accessor, just load all files and concatenate the desired field to return
-#   cache in the same instance.
-
-
 class Session(PersistentObject):
     """
     Sessions store and manage experimental data for persistent access.
@@ -158,7 +161,7 @@ class Session(PersistentObject):
         :param root: Directory containing session's saved data
         """
         super().__init__(name, root)
-        self.verbose=verbose
+        self.verbose = verbose
         self._data_path = os.path.join(self._dir, "data")
 
     def add_data(self, file_name, file_directory, **kwargs):
@@ -168,7 +171,7 @@ class Session(PersistentObject):
         Load .mat files, compute the firing rates and populate session information.
         If session instance contains no data, the first loaded session specifies fields that must
         be the same between sessions (num trials, ts). Additional session data increases the number
-        of neurons and the neuron info.
+        of neurons and the neuron info record length.
 
         :param file_name: Name of file to add
         :param file_directory: Name of directory containing file to add
@@ -214,10 +217,10 @@ class Session(PersistentObject):
                 fr_data[...] = to_add
             else:
                 data_handle.create_dataset(name='firing_rates',
-                                                 shape=firing_rates.shape,
-                                                 maxshape=(firing_rates.shape[0],
-                                                           firing_rates.shape[1],
-                                                           None), data=firing_rates)
+                                           shape=firing_rates.shape,
+                                           maxshape=(firing_rates.shape[0],
+                                                     firing_rates.shape[1],
+                                                     None), data=firing_rates)
 
             # extract ragged array, restructure as 2d array of arrays (numpy dtype = object)
             spike_times = np.stack(data["neuron_single_units"][keep_neurons])
@@ -236,19 +239,19 @@ class Session(PersistentObject):
                 num_neurons = to_add.shape[0]
                 spike_data = data_handle["spike_times"]
                 spike_data.resize((num_neurons,
-                                num_trials,
-                                ))
+                                   num_trials,
+                                   ))
                 spike_data[...] = to_add
             else:
                 # spike times are ragged arrays with shape [num_neurons][num_trials][var_num_spikes]
                 # requires special treatment from h5py
                 dtype = h5py.vlen_dtype(np.float64)
                 data_handle.create_dataset(name="spike_times",
-                                                 shape=(num_neurons_this_sess, num_trials,),
-                                                 maxshape=(None, num_trials,),
-                                                 dtype=dtype,
-                                                 data=spike_times
-                                                 )
+                                           shape=(num_neurons_this_sess, num_trials,),
+                                           maxshape=(None, num_trials,),
+                                           dtype=dtype,
+                                           data=spike_times
+                                           )
 
             if "lick_directions" not in data_handle.keys():
                 lds = np.ones((self.get_num_trials(),)) * ENUM_NO_LICK
@@ -271,12 +274,12 @@ class Session(PersistentObject):
 
             self._add_to_file_record(file_name)
 
+    # Accessor methods (necessary to use wrapper?)
     @access_hd5
     def get_spike_times(self):
         with h5py.File(self._data_path, "r") as data_handle:
-            data =  data_handle["spike_times"]
+            data = np.asarray(data_handle["spike_times"])
         return data
-
 
     @access_hd5
     def get_num_neurons(self):
@@ -296,7 +299,6 @@ class Session(PersistentObject):
             data = np.array(data_handle["ts"])
         return data
 
-
     @access_hd5
     def get_lick_directions(self):
         with h5py.File(self._data_path, "r") as data_handle:
@@ -312,7 +314,7 @@ class Session(PersistentObject):
                 return np.array(data_handle["firing_rates"])
             elif region in self.get_session_brain_regions():
                 neurons_in_this_region = self.get_neuron_brain_regions() == region
-                return np.array(data_handle["firing_rates"][:, :, neurons_in_this_region])
+                return np.array(data_handle["firing_rates"])[:, :, neurons_in_this_region]
             else:
                 raise KeyError("Region {0} not contained"
                                " within this session: {1}".format(region, self.get_session_brain_regions()))
@@ -349,12 +351,11 @@ class Session(PersistentObject):
         """
         with h5py.File(self._data_path, "r") as data_handle:
             if region in self.get_session_brain_regions():
-                return data_handle["pca_components" + "/" + region], data_handle[
-                    "pca_projections" + "/" + region]
+                return np.asarray(data_handle["pca_components" + "/" + region]), np.asarray(data_handle[
+                    "pca_projections" + "/" + region])
             else:
                 raise KeyError("Region {0} not contained"
                                " within this session: {1}".format(region, self.get_session_brain_regions()))
-
 
     def compute_firing_rate_pca_by_brain_region(self, num_pcs=2):
         """
@@ -365,448 +366,31 @@ class Session(PersistentObject):
         :return:
         """
         # TODO: add overwrite toggle if clients want to recompute with different number of pcs on same session instance
-        data_handle = h5py.File(self._data_path, 'a')
+
+        regions = self.get_session_brain_regions()
+        if self.verbose:
+            print("Performing Principal Component Analysis...", end='')
+
         with h5py.File(self._data_path, "r") as data_handle:
-
-            regions = self.get_session_brain_regions()
-            if self.verbose:
-                print("Performing Principal Component Analysis...", end='')
-
-            # check if pcs already exist, if so delete and recompute
             if "pca_projections" in data_handle.keys() and "pca_components" in data_handle.keys():
                 if self.verbose:
                     print("PCA Already Performed on Session {0} - skipping.".format(self._name))
                 return
-            for region in regions:
-                frs = self.get_firing_rates(region=region)
-                (num_bins, num_trials, num_neurons) = frs.shape
-                frs_concat = np.swapaxes(frs, 0, 2).reshape((num_neurons, num_bins * num_trials))
-                pca = PCA(n_components=num_pcs, svd_solver ="full")
-                pca.fit(frs_concat.T)
-                fr_pcas = np.zeros((num_bins, num_trials, num_pcs))
 
-                for j in range(num_pcs):
-                    component = pca.components_[j, :]
-                    fr_pcas[:, :, j] = np.tensordot(frs, component, axes=1)
+        for region in regions:
+            frs = self.get_firing_rates(region=region)
+            (num_bins, num_trials, num_neurons) = frs.shape
+            frs_concat = np.swapaxes(frs, 0, 2).reshape((num_neurons, num_bins * num_trials))
+            pca = PCA(n_components=num_pcs, svd_solver="full")
+            pca.fit(frs_concat.T)
+            fr_pcas = np.zeros((num_bins, num_trials, num_pcs))
 
+            for j in range(num_pcs):
+                component = pca.components_[j, :]
+                fr_pcas[:, :, j] = np.tensordot(frs, component, axes=1)
+
+            with h5py.File(self._data_path, "a") as data_handle:
                 data_handle["pca_projections" + "/" + region] = fr_pcas
                 data_handle["pca_components" + "/" + region] = pca.components_
 
-                print("done.")
-
-
-# OLD CODE
-# def _save(self):
-#     print("Saving Instance {0}...".format(self._name), end='')
-#     data_to_save = { field : getattr(self, field) for (field, _) in Session.FIELDS}
-#     print('done.')
-#     for (field,_) in Session.FIELDS:
-#         data = getattr(self, field)
-#         save_path = os.path.join(self._dir, self._name + "_" + field)
-#         np.save(save_path, data)
-# os.rename(save_path + ".npy", save_path + Session.EXT_SESSION_DATA)
-# def _save_file_data(self, file_name, file_data):
-#     """
-#     Save file data, separating fields into different files.
-#
-#     :param file_name: name of the file being saved, used to name, prepends data being saved
-#     :type file_name: string
-#     :param file_data: dictionary [Fields]-->file data, field nae suffixes data being saved. Must contain
-#     :type file_data: dict
-#     an entry for each FIELD specified in Session.FIELDS
-#     """
-#     # first check that file_data specifies each field
-#     for (f, _) in Session.FIELDS:
-#         assert(f in file_data.keys())
-#
-#     for (f, _) in Session.FIELDS:
-#         save_name = file_name + "/" + f
-#         dset = data_handle.create_dataset(name=save_name, data=file_data[f])
-#
-# def _load_file_data(self, file_name):
-#     """
-#     Load all field data from a given file.
-#
-#     :param file_name: name of file to load
-#     :type file_name: string
-#     :return: file_data, dictionary with keys=field and value=data for given file
-#     :rtype: dict
-#     """
-#     file_data = {}
-#     for (f, _) in Session.FIELDS:
-#        load_name = file_name + "_" + f + Session.EXT_SESSION_DATA
-#        load_path = os.path.join(self._dir, load_name)
-#        field_data = np.load(load_path)
-#        file_data[f] = field_data
-#     return file_data
-#
-# def _load_field_by_file(self, field, file_name):
-#     """
-#     Load given field data for a given file.
-#
-#     :param field: The field to load. must be listed in Session.FIELD
-#     :type field: string
-#     :param file_name: the name of the file to load. must be contained within the Session filed record
-#     :type file_name: string
-#     :return: data
-#     :rtype: variable = Session.FIELDS[field]
-#     """
-#     if field not in [ f[0] for f in Session.FIELDS]:
-#         raise KeyError("Requested field {0} not in Session.FIELDS ".format(field))
-#     if not self.contains(file_name):
-#         raise FileNotFoundError("File {0} not listing within"
-#                                 " file record of {1}".format(file_name, self._name))
-#     try:
-#         file_path = os.path.join(self._dir, file_name + "_" + field + Session.EXT_SESSION_DATA)
-#         return np.load(file_path)
-#     except OSError:
-#         print("Error loading file {0}".format(file_path))
-#         raise
-#
-# def _load_field(self, field):
-#     """
-#     Load field data from all fields in a given record.
-#
-#     :param field: Field name of data to load
-#     :type field: string
-#     :return: field data
-#     :rtype: variable = Session.FIELDS[field]
-#     """
-#     # ('firing_rates', np.ndarray),
-#     # ('num_neurons', np.int32),
-#     # ('num_trials', np.int32),
-#     # ('neurons_info', np.ndarray),
-#     # ('ts', np.ndarray),
-#     # ('spike_times', np.ndarray),
-#     # ('lick_dirs', np.ndarray)
-#     if field == "firing_rates":
-#         pass
-#     # if field needs to be stacked from multiple files
-#         # get a list of all files of that field in this sessions
-#     # else just load one file
-
-
-#
-# # region ## Load PCA Data
-# pcas = []
-# for frs in os.listdir(DIR_PCA_SAVE):
-#     if frs.endswith("_pca_two.npy"):
-#         pcas.append(np.load(DIR_PCA_SAVE + "\\" + frs))
-# pcas = pcas[:4]
-#
-# ts = np.load(DIR_FIRING_RATES + "/" + "map-export_SC022_20190228_140832_s2_p1.mat_binCenters.npy")
-# # endregion
-#
-# # region ## Plot First Two PCAs ##
-#
-# pc1 = pcas[0]
-# num_ts = pc1.shape[0]
-# num_trials = pc1.shape[1]
-#
-# idx_trial = 10
-# titles = ["PC One Left ALM", "PC One Right ALM", "PC One Left Striatum", "PC One Right Striatum"]
-#
-# idx_pc = 0
-# for j, title in enumerate(titles):
-#     pc1 = pcas[j]
-#     pc1s = np.zeros((num_ts, num_trials))
-#     for i in range(num_trials):
-#         pc1s[:, i] = pc1[:, i, idx_pc]
-#     error = np.std(pc1s, axis=1) / np.sqrt(num_trials)
-#     y = np.mean(pc1s, axis=1)
-#     plt.figure(title)
-#     plt.plot(ts, y, label='Mean +/- S.E.M', c='g')
-#     plt.fill_between(ts, y - error, y + error, alpha=.2, color='g')
-#     plt.plot(ts, pc1s[:, idx_trial], c='r', label='Trial {0}'.format(idx_trial))
-#     plt.title(title)
-#     plt.ylabel("Firing Rate")
-#     plt.xlabel("Time (s)")
-#     plt.legend()
-#     plt.savefig(title + ".png", dpi=128, bbox_inches='tight')
-#     plt.show()
-#
-# titles = ["PC Two Left ALM", "PC Two Right ALM", "PC Two Left Striatum", "PC Two Right Striatum"]
-#
-# idx_pc = 1
-# for j, title in enumerate(titles):
-#     pc1 = pcas[j]
-#     pc1s = np.zeros((num_ts, num_trials))
-#     for i in range(num_trials):
-#         pc1s[:, i] = pc1[:, i, idx_pc]
-#     error = np.std(pc1s, axis=1) / np.sqrt(num_trials)
-#     y = np.mean(pc1s, axis=1)
-#     plt.figure(title)
-#     plt.plot(ts, y, label='Mean +/- S.E.M', c='g')
-#     plt.fill_between(ts, y - error, y + error, alpha=.2, color='g')
-#     plt.plot(ts, pc1s[:, idx_trial], c='r', label='Trial {0}'.format(idx_trial))
-#     plt.title(title)
-#     plt.ylabel("Firing Rate")
-#     plt.xlabel("Time (s)")
-#     plt.legend()
-#     plt.savefig(title + ".png", dpi=128, bbox_inches='tight')
-#     plt.show()
-# # endregion
-#
-# # region ## Trial-Average PCA Cross-Correlation
-# # fs = 1 / (ts[1] - ts[0])
-# # lags = ts_to_acorr_lags(ts)
-# #
-# # data_sess = list_data_sess[0]
-# # left_lick_trials = get_trials_by_lick_direction(data_sess, 'l')
-# # right_lick_trials = get_trials_by_lick_direction(data_sess, 'r')
-# #
-# # trials = right_lick_trials
-# #
-# # num_trials = len(trials)
-# #
-# #
-# # crosscorrs_alm_left_pca_one_alm_left_pca_two = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_alm_right_pca_one = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_alm_right_pca_two = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_stri_left_one = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_stri_left_two = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_stri_right_one = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_stri_right_two = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_shifted = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_arma = np.zeros((len(lags), num_trials))
-# #
-# #
-# #
-# # crosscorrs_alm_left_pca_one_alm_left_pca_two_whitened = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_alm_right_pca_one_whitened = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_alm_right_pca_two_whitened = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_stri_left_one_whitened = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_stri_left_two_whitened = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_stri_right_one_whitened = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_stri_right_two_whitened = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_pca_one_shifted_whitened = np.zeros((len(lags), num_trials))
-# # crosscorrs_alm_left_arma_whitened = np.zeros((len(lags), num_trials))
-# #
-# # for i in range(num_trials):
-# #     idx_trial = trials[i]
-# #     #pcas look like (num bins, num trials, num pca components)
-# #     pca_alm_left_one = pcas[0][:, idx_trial, 0]
-# #     pca_alm_left_two = pcas[0][:, idx_trial, 1]
-# #     pca_alm_right_one = pcas[1][:, idx_trial, 0]
-# #     pca_alm_right_two = pcas[1][:, idx_trial, 1]
-# #     pca_stri_left_one = pcas[2][:, idx_trial, 0]
-# #     pca_stri_left_two = pcas[2][:, idx_trial, 1]
-# #     pca_stri_right_one = pcas[3][:, idx_trial, 0]
-# #     pca_stri_right_two = pcas[3][:, idx_trial, 1]
-# #
-# #     space = 10
-# #     pca_alm_left_arma = 3 * np.roll(pca_alm_left_one, -1 * space) + 2 * np.roll(pca_alm_left_one, -2 * space) + 1 * np.roll(pca_alm_left_one, -3 * space)
-# #
-# #     pca_alm_left_one_shifted = np.roll(pca_alm_left_one, 101) #+ np.random.normal(scale=0, size=pca_alm_left_one_shifted.shape)
-# #
-# #     freqs, Filt = get_whitening_filter(pca_alm_left_one, fs, b=np.inf, mode='highpass')
-# #
-# #
-# #     pca_alm_left_one_whitened = apply_filter(pca_alm_left_one, Filt)
-# #     pca_alm_left_two_whitened = apply_filter(pca_alm_left_two, Filt)
-# #     pca_alm_right_one_whitened = apply_filter(pca_alm_right_one, Filt)
-# #     pca_alm_right_two_whitened = apply_filter(pca_alm_right_two, Filt)
-# #     pca_stri_left_one_whitened = apply_filter(pca_stri_left_one, Filt)
-# #     pca_stri_left_two_whitened = apply_filter(pca_stri_left_two, Filt)
-# #     pca_stri_right_one_whitened = apply_filter(pca_stri_right_one, Filt)
-# #     pca_stri_right_two_whitened = apply_filter(pca_stri_right_two, Filt)
-# #     pca_alm_left_one_shifted_whitened = apply_filter(pca_alm_left_one_shifted, Filt)
-# #     pca_alm_left_arma_whitened = apply_filter(pca_alm_left_arma, Filt)
-# #
-# #     crosscorrs_alm_left_pca_one_alm_left_pca_two[:,i] = cross_correlation(pca_alm_left_one, pca_alm_left_two)
-# #     crosscorrs_alm_left_pca_one_alm_right_pca_one[:,i] = cross_correlation(pca_alm_left_one, pca_alm_right_one)
-# #     crosscorrs_alm_left_pca_one_alm_right_pca_two[:,i] =  cross_correlation(pca_alm_left_one, pca_alm_right_two)
-# #     crosscorrs_alm_left_pca_one_stri_left_one[:,i] = cross_correlation(pca_alm_left_one, pca_stri_left_one)
-# #     crosscorrs_alm_left_pca_one_stri_left_two[:,i] = cross_correlation(pca_alm_left_one, pca_stri_left_two)
-# #     crosscorrs_alm_left_pca_one_stri_right_one[:,i] = cross_correlation(pca_alm_left_one, pca_stri_right_one)
-# #     crosscorrs_alm_left_pca_one_stri_right_two[:,i] = cross_correlation(pca_alm_left_one,  pca_stri_right_two)
-# #     crosscorrs_alm_left_pca_one_shifted[:,i] = cross_correlation(pca_alm_left_one,  pca_alm_left_one_shifted)
-# #     crosscorrs_alm_left_arma[:,i] = cross_correlation(pca_alm_left_one,  pca_alm_left_arma)
-# #
-# #
-# #     crosscorrs_alm_left_pca_one_alm_left_pca_two_whitened[:,i] = cross_correlation(pca_alm_left_one_whitened, pca_alm_left_two_whitened)
-# #     crosscorrs_alm_left_pca_one_alm_right_pca_one_whitened[:,i] = cross_correlation(pca_alm_left_one_whitened, pca_alm_right_one_whitened)
-# #     crosscorrs_alm_left_pca_one_alm_right_pca_two_whitened[:,i] =  cross_correlation(pca_alm_left_one_whitened, pca_alm_right_two_whitened)
-# #     crosscorrs_alm_left_pca_one_stri_left_one_whitened[:,i] = cross_correlation(pca_alm_left_one_whitened, pca_stri_left_one_whitened)
-# #     crosscorrs_alm_left_pca_one_stri_left_two_whitened[:,i] = cross_correlation(pca_alm_left_one_whitened, pca_stri_left_two_whitened)
-# #     crosscorrs_alm_left_pca_one_stri_right_one_whitened[:,i] = cross_correlation(pca_alm_left_one_whitened, pca_stri_right_one_whitened)
-# #     crosscorrs_alm_left_pca_one_stri_right_two_whitened[:,i] = cross_correlation(pca_alm_left_one_whitened, pca_stri_right_two_whitened)
-# #     crosscorrs_alm_left_pca_one_shifted_whitened[:,i] = cross_correlation(pca_alm_left_one_whitened,  pca_alm_left_one_shifted_whitened)
-# #     crosscorrs_alm_left_arma_whitened[:,i] = cross_correlation(pca_alm_left_one_whitened,  pca_alm_left_arma_whitened)
-# #
-# # ylims = [-1, 1]
-# #
-# #
-# # plt.figure("Cross-Correlation ALM Left PC One, Itself Shifted {0} sec, N = {1} Trials".format(np.round(100 / fs), num_trials))
-# # plt.title("Cross-Correlation ALM Left PC One, Itself Shifted {0} sec, N = {1} Trials".format(np.round(100 / fs), num_trials))
-# # error = np.std(crosscorrs_alm_left_pca_one_shifted, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_shifted, axis=1)
-# # plt.plot(lags, y, label='Unwhitened +/- S.E.M', c='r')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='r')
-# #
-# # error = np.std(crosscorrs_alm_left_pca_one_shifted_whitened, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_shifted_whitened, axis=1)
-# # plt.plot(lags, y, label='Whitened +/- S.E.M', c='g')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='g')
-# # plt.ylabel("Cross-correlation Coefficient")
-# # plt.xlabel(r"Time Lag $\tau$ (s)")
-# # plt.legend()
-# # plt.ylim(ylims)
-# # plt.savefig("./figs/Cross-Correlation ALM Left PC One, Itself Shifted.png", dpi=128, bbox_inches='tight')
-# # plt.show()
-# #
-# #
-# # spaces = [np.round(j * space / fs, 2)  for j in [1, 2, 3]]
-# # plt.figure("Cross-Correlation ALM Left PC One, AR Model, $Y(t) = 3 x(t - {0}) + 2 x(t - {1}) + 1 x(t - {2})$".format(*spaces))
-# # plt.title("Cross-Correlation ALM Left PC One, AR Model, $Y(t) = 3 x(t - {0}) + 2 x(t - {1}) + 1 x(t - {2})$".format(*spaces))
-# # error = np.std(crosscorrs_alm_left_arma, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_arma, axis=1)
-# # plt.plot(lags, y, label='Unwhitened +/- S.E.M', c='r')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='r')
-# # error = np.std(crosscorrs_alm_left_arma_whitened, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_arma_whitened, axis=1)
-# # plt.plot(lags, y, label='Whitened +/- S.E.M', c='g')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='g')
-# # plt.ylabel("Cross-correlation Coefficient")
-# # plt.xlabel(r"Time Lag $\tau$ (s)")
-# # plt.legend()
-# # plt.ylim(ylims)
-# # plt.savefig("./figs/Cross-Correlation ALM Left PC One, AR Model.png", dpi=128, bbox_inches='tight')
-# # plt.show()
-# #
-# #
-# # plt.figure("Cross-Correlation ALM Left PC One, ALM Right PC One, N = {0} Trials".format(num_trials))
-# # plt.title("Cross-Correlation ALM Left PC One, ALM Right PC One, N = {0} Trials".format(num_trials))
-# # error = np.std(crosscorrs_alm_left_pca_one_alm_right_pca_one, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_alm_right_pca_one, axis=1)
-# # plt.plot(lags, y, label='Unwhitened +/- S.E.M', c='r')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='r')
-# #
-# # error = np.std(crosscorrs_alm_left_pca_one_alm_right_pca_one_whitened, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_alm_right_pca_one_whitened, axis=1)
-# # plt.plot(lags, y, label='Whitened +/- S.E.M', c='g')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='g')
-# # plt.ylabel("Cross-correlation Coefficient")
-# # plt.xlabel(r"Time Lag $\tau$ (s)")
-# # plt.legend()
-# # plt.ylim(ylims)
-# # plt.savefig("Cross-Correlation ALM Left PC One, ALM Right PC One, N = {0} Trials".format(num_trials), dpi=128, bbox_inches='tight')
-# # plt.show()
-# #
-# # plt.figure("Cross-Correlation ALM Left PC One, ALM Right PC Two, N = {0} Trials".format(num_trials))
-# # plt.title("Cross-Correlation ALM Left PC One, ALM Right PC Two, N = {0} Trials".format(num_trials))
-# # error = np.std(crosscorrs_alm_left_pca_one_alm_right_pca_two, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_alm_right_pca_two, axis=1)
-# # plt.plot(lags, y, label='Unwhitened +/- S.E.M', c='r')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='r')
-# #
-# # error = np.std(crosscorrs_alm_left_pca_one_alm_right_pca_two_whitened, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_alm_right_pca_two_whitened, axis=1)
-# # plt.plot(lags, y, label='Whitened +/- S.E.M', c='g')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='g')
-# # plt.ylabel("Cross-correlation Coefficient")
-# # plt.xlabel(r"Time Lag $\tau$ (s)")
-# # plt.legend()
-# # plt.ylim(ylims)
-# # plt.savefig("Cross-Correlation ALM Left PC One, ALM Right PC Two, N = {0} Trials".format(num_trials), dpi=128, bbox_inches='tight')
-# # plt.show()
-# #
-# #
-# #
-# #
-# # plt.figure("Cross-Correlation ALM Left PC One, ALM Left PC Two")
-# # plt.title("Cross-Correlation ALM Left PC One, ALM Left PC Two,  N = {0} Trials".format(num_trials))
-# # error = np.std(crosscorrs_alm_left_pca_one_alm_left_pca_two, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_alm_left_pca_two, axis=1)
-# # plt.plot(lags, y, label='Unwhitened +/- S.E.M', c='r')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='r')
-# #
-# # error = np.std(crosscorrs_alm_left_pca_one_alm_left_pca_two_whitened, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_alm_left_pca_two_whitened, axis=1)
-# # plt.plot(lags, y, label='Whitened +/- S.E.M', c='g')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='g')
-# # plt.ylabel("Cross-correlation Coefficient")
-# # plt.xlabel(r"Time Lag $\tau$ (s)")
-# # plt.legend()
-# # plt.ylim(ylims)
-# # plt.savefig("./figs/Cross-Correlation ALM Left PC One, ALM Left PC Two,  N = {0} Trials.png".format(num_trials), dpi=128, bbox_inches='tight')
-# #
-# # plt.show()
-# #
-# #
-# # plt.figure("Cross-Correlation ALM Left PC One, Striatum Left PC One")
-# # plt.title("Cross-Correlation ALM Left PC One, Striatum Left PC One ,  N = {0} Trials.png".format(num_trials))
-# # error = np.std(crosscorrs_alm_left_pca_one_stri_left_one, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_stri_left_one, axis=1)
-# # plt.plot(lags, y, label='Unwhitened +/- S.E.M', c='r')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='r')
-# #
-# # error = np.std(crosscorrs_alm_left_pca_one_stri_left_one_whitened, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_stri_left_one_whitened, axis=1)
-# # plt.plot(lags, y, label='Whitened +/- S.E.M', c='g')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='g')
-# # plt.ylabel("Cross-correlation Coefficient")
-# # plt.xlabel(r"Time Lag $\tau$ (s)")
-# # plt.legend()
-# # plt.ylim(ylims)
-# # plt.savefig("./figs/Cross-Correlation ALM Left PC One, Striatum Left PC One ,  N = {0} Trials.png".format(num_trials), dpi=128, bbox_inches='tight')
-# #
-# # plt.show()
-# #
-# #
-# # plt.figure("Cross-Correlation ALM Left PC One, Striatum Left PC Two")
-# # plt.title("Cross-Correlation ALM Left PC One, Striatum Left PC Two,  N = {0} Trials.png".format(num_trials))
-# # error = np.std(crosscorrs_alm_left_pca_one_stri_left_two, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_stri_left_two, axis=1)
-# # plt.plot(lags, y, label='Unwhitened +/- S.E.M', c='r')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='r')
-# #
-# # error = np.std(crosscorrs_alm_left_pca_one_stri_left_two_whitened, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_stri_left_two_whitened, axis=1)
-# # plt.plot(lags, y, label='Whitened +/- S.E.M', c='g')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='g')
-# # plt.ylabel("Cross-correlation Coefficient")
-# # plt.xlabel(r"Time Lag $\tau$ (s)")
-# # plt.legend()
-# # plt.ylim(ylims)
-# # plt.savefig("./figs/Cross-Correlation ALM Left PC One, Striatum Left PC Two,  N = {0} Trials.png".format(num_trials), dpi=128, bbox_inches='tight')
-# #
-# # plt.show()
-# #
-# #
-# # plt.figure("Cross-Correlation ALM Left PC One, Striatum Right PC One")
-# # plt.title("Cross-Correlation ALM Left PC One, Striatum Right PC One,  N = {0} Trials".format(num_trials))
-# # error = np.std(crosscorrs_alm_left_pca_one_stri_right_one, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_stri_right_one, axis=1)
-# # plt.plot(lags, y, label='Unwhitened +/- S.E.M', c='r')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='r')
-# #
-# # error = np.std(crosscorrs_alm_left_pca_one_stri_right_one_whitened, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_stri_right_one_whitened, axis=1)
-# # plt.plot(lags, y, label='Whitened +/- S.E.M', c='g')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='g')
-# # plt.ylabel("Cross-correlation Coefficient")
-# # plt.xlabel(r"Time Lag $\tau$ (s)")
-# # plt.legend()
-# # plt.ylim(ylims)
-# # plt.savefig("./figs/Cross-Correlation ALM Left PC One, Striatum Right PC One,  N = {0} Trials.png".format(num_trials), dpi=128, bbox_inches='tight')
-# # plt.show()
-# #
-# # plt.figure("Cross-Correlation ALM Left PC One, Striatum Right PC Two")
-# # plt.title("Cross-Correlation ALM Left PC One, Striatum Right PC Two,  N = {0} Trials".format(num_trials))
-# # error = np.std(crosscorrs_alm_left_pca_one_stri_right_two, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_stri_right_two, axis=1)
-# # plt.plot(lags, y, label='Unwhitened +/- S.E.M', c='r')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='r')
-# #
-# # error = np.std(crosscorrs_alm_left_pca_one_stri_right_two_whitened, axis = 1) / np.sqrt(num_trials)
-# # y = np.mean(crosscorrs_alm_left_pca_one_stri_right_two_whitened, axis=1)
-# # plt.plot(lags, y, label='Whitened +/- S.E.M', c='g')
-# # plt.fill_between(lags, y-error, y+error, alpha=.2, color='g')
-# # plt.ylabel("Cross-correlation Coefficient")
-# # plt.xlabel(r"Time Lag $\tau$ (s)")
-# # plt.legend()
-# # plt.ylim(ylims)
-# # plt.savefig("./figs/Cross-Correlation ALM Left PC One, Striatum Right PC Two.png", dpi=128, bbox_inches='tight')
-# # plt.show()
-# # endregion
+        print("done.")
