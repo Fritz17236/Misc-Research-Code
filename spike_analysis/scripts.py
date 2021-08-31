@@ -7,18 +7,20 @@ scripts.py define and run multi-leveled analyses here
 import traceback
 from collections import defaultdict
 import os
+from time import time
+
+import constants
 from constants import DIR_RAW, DIR_SAVE
-from utils import ts_to_acorr_lags, get_psd, get_whitening_filter,\
-    autocorrelation, apply_filter, cross_correlation,\
-    spike_train_cch
+from utils import ts_to_acorr_lags, get_psd, get_whitening_filter, \
+    autocorrelation, apply_filter, cross_correlation, \
+    spike_train_cch_raw
 import utils
 import numpy as np
 import matplotlib.pyplot as plt
 from containers import Session
 import tqdm
+from sklearn.decomposition import PCA
 
-np.seterr(
-    all='raise')  # optional but typically means something is wrong or you're not filtering poor data from analyses
 
 
 # preprocess all data if need be, otherwise just loads the data handles into memory.
@@ -42,6 +44,8 @@ def load_all_session_data(verbose=False):
         """
         session_name_dict = defaultdict(list)
         for fname in file_name_list:
+            if os.path.isdir(fname.rstrip()):
+                continue
             split_name = fname.split('_')
             mat_header = split_name[0]
             session_name = split_name[1] + "_" + split_name[2] + "_" + split_name[3] + "_" + split_name[4]
@@ -54,7 +58,7 @@ def load_all_session_data(verbose=False):
 
     print("Loading Session Data...")
 
-    session_names = get_session_name_dict(os.listdir(DIR_RAW))
+    session_names = get_session_name_dict([f.name for f in os.scandir(DIR_RAW) if not f.is_dir()])
     session_data = {}
 
     for idx_session, (session_name, files) in enumerate(session_names.items()):
@@ -70,9 +74,6 @@ def load_all_session_data(verbose=False):
 
                 # create session object with given name, data saved in DIR_SAVE declared in constants.py
                 sess.add_data(file_name=file_name, file_directory=DIR_RAW)
-
-            # now compute principal components with option to specify how many principal components:
-            sess.compute_firing_rate_pca_by_brain_region(num_pcs=2)
 
             # for accessing later in script
             session_data[session_name] = sess
@@ -241,34 +242,37 @@ def plot_pc_cross_correlation_analysis(session, pc_ref, pc_name, save_dir):
         plt.close("all")
 
 
-def pairwise_pca_cross_correlation_trial_averaged(session, region_pair, pca_idxs):
+def pairwise_pca_cross_correlation_trial_averaged(session, region_pair, pca_idxs, filter_lick_dirs='l'):
     """
 
     :param session: Session instance containing data
-    :param region: 2-tuple of strings specifying brain regions 1 and 2
+    :param region_pair: 2-tuple of strings specifying brain regions 1 and 2
     :param pca_idxs: 2-tuple of indices specifying which principal
+    :param filter_lick_dirs: only consider trials where the task was a specific lick direction (left 'l' or right 'r')
     :return: (cross_corrs, cross_corrs_whitened, num_trials, n_trials): trial-averaged cross correlation between the
      specified pcs of the specified regions
     """
+    if filter_lick_dirs:
+        trial_mask = session.get_task_lick_directions() == filter_lick_dirs
+    else:
+        trial_mask = np.ones((session.get_num_trials(),), dtype=np.int)
+
     _, proj_1 = session.get_pca_by_region(region=region_pair[0])
-    proj_1 = proj_1[:, :, pca_idxs[0]]
+    proj_1 = proj_1[:, trial_mask, pca_idxs[0]]
     _, proj_2 = session.get_pca_by_region(region=region_pair[1])
-    proj_2 = proj_2[:, :, pca_idxs[1]]
+    proj_2 = proj_2[:, trial_mask, pca_idxs[1]]
 
     num_bins, num_trials = proj_1.shape
+
     assert (proj_1.shape == proj_2.shape), "Principal " \
                                            "components should have same shape but had {0} and {1}" \
                                            "".format(proj_1.shape, proj_2.shape)
 
     fs = 1 / (session.get_ts()[1] - session.get_ts()[0])
-    lags = ts_to_acorr_lags(session.get_ts())
     freqs, _ = get_psd(proj_1[:, 0], fs)
-    num_freqs = len(freqs)
 
     cross_corrs = np.zeros((num_bins, num_trials))
     cross_corrs_whitened = np.zeros(cross_corrs.shape)
-    # cross_psds = np.zeros((num_freqs, num_trials))
-    # cross_psds_whitened = np.zeros((num_freqs, num_trials))
 
     for idx_trial in range(num_trials):
         _, whiten_filter = get_whitening_filter(proj_1[:, idx_trial], fs, b=np.inf, mode='highpass')
@@ -278,10 +282,36 @@ def pairwise_pca_cross_correlation_trial_averaged(session, region_pair, pca_idxs
             continue
         cross_corrs_whitened[:, idx_trial] = cross_correlation(apply_filter(proj_1[:, idx_trial], whiten_filter)
                                                                , apply_filter(proj_2[:, idx_trial], whiten_filter))
-        # _, cross_psds[:, idx_trial] = get_psd(cross_corrs[:, idx_trial], fs)
-        # _, cross_psds_whitened[:, idx_trial] = get_psd(cross_corrs_whitened[:, idx_trial], fs)
 
     return cross_corrs, cross_corrs_whitened, num_trials
+
+
+def trial_cch_p_val_analysis(trig, ref, rng, bin_width, p_crit, cch_pred):
+    cch = utils.spike_train_cch_raw(trig=trig, ref=ref, rng=rng, bin_width=bin_width)
+    p_vals = utils.get_p_vals(cch, cch_pred)
+    sigs = np.asarray([1 if p_vals[idx_prob] < p_crit else 0 for idx_prob in range(len(p_vals))])
+
+    return {
+        "cch": cch,
+        "cch_pred": cch_pred,
+        "p_vals": p_vals,
+        "sigs": sigs
+    }
+
+
+def trial_averaged_cch_significance_counts(spike_times, idx_neuron_1, idx_neuron_2, rng, bin_width, window_width,
+                                           p_crit, trial_len):
+
+    cch_pred = utils.get_cch_predictor(spike_times[idx_neuron_1], spike_times[idx_neuron_2], rng, window_width, bin_width, trial_len)
+    num_trials = spike_times.shape[1]
+    lags = bin_width * np.arange(-rng, rng + 1)
+    significance_counts = np.zeros(lags.shape)
+    for idx_trial in range(num_trials):
+        t_data = trial_cch_p_val_analysis(trig=spike_times[idx_neuron_1][idx_trial],
+                                          ref=spike_times[idx_neuron_2][idx_trial], rng=rng, bin_width=bin_width,
+                                          p_crit=p_crit, cch_pred=cch_pred)
+        significance_counts += t_data["sigs"]
+    return significance_counts
 
 
 def trial_averaged_cch(session, idx_neuron_1, idx_neuron_2, bin_width, rng):
@@ -297,23 +327,63 @@ def trial_averaged_cch(session, idx_neuron_1, idx_neuron_2, bin_width, rng):
     """
     num_trials = session.get_num_trials()
 
-
-
     spike_times = session.get_spike_times().copy()
-    lags, cch = utils.spike_train_cch(spike_times[idx_neuron_1][0], spike_times[idx_neuron_2][0], rng=rng,
-                                      bin_width=bin_width, return_lags=True
-                                      )
+    lags, cch = utils.spike_train_cch_raw(spike_times[idx_neuron_1][0], spike_times[idx_neuron_2][0], rng=rng,
+                                          bin_width=bin_width, return_lags=True
+                                          )
     cchs = np.zeros((len(cch), num_trials))
     cchs[:, 0] = cch
     print("Computing Trial-Averaged CCH...")
     for idx_trial in tqdm.tqdm(range(1, num_trials)):
         trig = spike_times[idx_neuron_1][idx_trial]
         ref = spike_times[idx_neuron_2][idx_trial]
-        cchs[:, idx_trial] = spike_train_cch(trig, ref, rng, bin_width)
+        cchs[:, idx_trial] = spike_train_cch_raw(trig, ref, rng, bin_width)
 
     return lags, cchs.mean(axis=1), num_trials
 
+
+def compute_session_pca_by_region(session, num_pcs=2, mode='fr', dt=constants.BIN_WIDTH_DEFAULT,
+                                t_start=constants.TIME_BEGIN_DEFAULT, t_stop=constants.TIME_END_DEFAULT):
+    """
+    Perform Principal Component Analysis on stored Firing Rates, Splitting by brain region
+
+    PCA is performed across trials
+    :param num_pcs: number of principal components to compute.
+    :return: region_pcs dict with keys = region (str) and values princpal components for that
+    region, shape = [num_ts/bins][num_trials][num_pcs]
+    """
+
+    region_pcs ={}
+    print("Computing Region PC's...")
+    for idx, region in enumerate(session.get_session_brain_regions()):
+        print("\tRegion: {0} ({1}/{2})".format(region, idx+1, len(session.get_session_brain_regions())))
+        if mode == 'fr':
+            frs = session.get_firing_rates(region=region).copy()
+        elif mode == 'isi':
+            frs = utils.compute_trial_isis(session, dt, t_start, t_stop, region)
+
+        (num_bins, num_trials, num_neurons) = frs.shape
+        frs_concat = np.swapaxes(frs, 0, 2).reshape((num_neurons, num_bins * num_trials))
+        pca = PCA(n_components=num_pcs, svd_solver="full")
+        try:
+            pca.fit(frs_concat.T)
+        except FloatingPointError:
+            print("True divide by zero error encountered in pca for session {0}".format(session._name))
+        fr_pcas = np.zeros((num_bins, num_trials, num_pcs))
+
+        for j in range(num_pcs):
+            component = pca.components_[j, :]
+            fr_pcas[:, :, j] = np.tensordot(frs, component, axes=1)
+
+        region_pcs[region] = fr_pcas
+    return region_pcs
+
+def compute_session_cch_predictors(session):
+    # TODO: implement with main code, and add option to shuffle trials by given amount before returning
+    pass
+
 # endregion
+
 
 # region Multi-Session Scripts
 
@@ -404,14 +474,16 @@ def match_region_pairs_to_sessions(session_to_regions):
     return region_pairs_to_session_names
 
 
-def pca_cross_correlation_experiment_averaged(session_data_dict):
+def pca_cross_correlation_experiment_averaged(session_data_dict, filter_lick_dirs='l'):
     """
     Compute the cross correlation between the first principal components of every brain region pair in experiment.
 
     :param session_data_dict: dict containing keys = session name, values = Session instances
+    :param filter_lick_dirs: only consider trials where the task was a specific lick direction (left 'l' or right 'r')
     """
 
-    def pairwise_pca_cross_correlation_experiment_averaged(pair, idx_pcs, region_pairs_to_sessions, session_data_dict):
+    def pairwise_pca_cross_correlation_experiment_averaged(pair, idx_pcs, region_pairs_to_sessions, session_data_dict,
+                                                           filter_lick_dirs='l'):
         """
         Compute the weighted average of cross correlations between a pair pair of region principal components. The second
         region/pca is whitened with respect to the first (the first is used to compute whitenening filter.)
@@ -420,6 +492,8 @@ def pca_cross_correlation_experiment_averaged(session_data_dict):
         :param idx_pcs: (2-tuple int) indices specifying which principal component to compute from
         :param region_pairs_to_sessions: dict mapping region pairs to sessions containing both pairs
         :param session_data_dict: dict mapping session names to session data
+        :param filter_lick_dirs: only consider trials where the task was a specific lick directrion
+        (left 'l' or right 'r')
         :return: (cross_corrs, cross_corrs_whitened) pairwise correlation between region/pca,
         trial-averaged over all sessions
         """
@@ -429,8 +503,9 @@ def pca_cross_correlation_experiment_averaged(session_data_dict):
 
         for sess in tqdm.tqdm(region_pairs_to_sessions[pair]):
             try:
-                cross_corrs, cross_corrs_whitened, num_trials = \
-                    pairwise_pca_cross_correlation_trial_averaged(session_data_dict[sess], pair, pca_idxs=idx_pcs)
+                cross_corrs, cross_corrs_whitened, nt = \
+                    pairwise_pca_cross_correlation_trial_averaged(session_data_dict[sess], pair, pca_idxs=idx_pcs,
+                                                                  filter_lick_dirs=filter_lick_dirs)
             except KeyError:
                 print("Error computing cross-correlation on session {0} with brain regions {1}, components {2}".format(
                     sess, pair, idx_pcs
@@ -446,57 +521,73 @@ def pca_cross_correlation_experiment_averaged(session_data_dict):
                 cross_corr_stds_whitened_running = cross_corr_stds_whitened
                 cross_corrs_avg = cross_corrs
                 cross_corrs_whitened_avg = cross_corrs_whitened
-                tot_trials = num_trials
+                tot_trials = nt
             else:
                 cross_corr_stds_running += cross_corr_stds
                 cross_corr_stds_whitened_running += cross_corr_stds_whitened
 
-                cross_corrs_avg = (cross_corrs_avg * tot_trials + cross_corrs * num_trials) / (tot_trials + num_trials)
+                cross_corrs_avg = (cross_corrs_avg * tot_trials + cross_corrs * nt) / (tot_trials + nt)
                 cross_corrs_whitened_avg = (cross_corrs_whitened_avg * tot_trials +
-                                            cross_corrs_whitened * num_trials) / (tot_trials + num_trials)
-                tot_trials += num_trials
+                                            cross_corrs_whitened * nt) / (tot_trials + nt)
+                tot_trials += nt
 
-        return cross_corrs_avg, cross_corrs_whitened_avg, np.sqrt(cross_corr_stds_running / tot_trials), \
-               np.sqrt(cross_corr_stds_whitened_running / tot_trials), tot_trials
+        return (
+            cross_corrs_avg,
+            cross_corrs_whitened_avg,
+            np.sqrt(cross_corr_stds_running / tot_trials),
+            np.sqrt(cross_corr_stds_whitened_running / tot_trials), tot_trials
+        )
 
     session_to_regions = get_session_to_region_dict(session_data_dict)
     region_pairs_to_sessions = match_region_pairs_to_sessions(session_to_regions)
-    for idx_pair, (pair, sess_list) in enumerate(region_pairs_to_sessions.items()):
-        print("({2} / {3}) Pair: {0}, sessions containing pair: {1}".format(pair, len(sess_list), idx_pair + 1,
-                                                                            len(region_pairs_to_sessions.items())))
-        # if pair[0] != "left ALM":
-        #     continue
-        # if pair[1] != "right ALM":
-        #     continue
+    # keep track of zero lags for each pair,
+    # sort by strongest whitened
+    zero_lags = defaultdict(tuple)
+    for idx_pcs in [(0,0)]:
+        for idx_pair, (pair, sess_list) in enumerate(region_pairs_to_sessions.items()):
+            print("({2} / {3}) Pair: {0}, sessions containing pair: {1}".format(pair, len(sess_list), idx_pair + 1,
+                                                                                len(region_pairs_to_sessions.items())))
 
-        idx_pcs = (0, 0)
-        cc_pair, ccw_pair, std_pair, stdw_pair, num_trials = \
-            pairwise_pca_cross_correlation_experiment_averaged(pair,
-                                                                       idx_pcs=idx_pcs,
-                                                                       region_pairs_to_sessions=region_pairs_to_sessions,
-                                                                       session_data_dict=session_data_dict
-                                                                       )
+            cc_pair, ccw_pair, std_pair, stdw_pair, num_trials = \
+                pairwise_pca_cross_correlation_experiment_averaged(pair,
+                                                                   idx_pcs=idx_pcs,
+                                                                   region_pairs_to_sessions=region_pairs_to_sessions,
+                                                                   session_data_dict=session_data_dict,
+                                                                   filter_lick_dirs=filter_lick_dirs
+                                                                   )
 
-        p5 = 2 * num_trials ** -.5
+            p5 = 2 * num_trials ** -.5
 
-        lags = utils.ts_to_acorr_lags(session_data_dict[sess_list[0]].get_ts())
-        title = "Cross Correlation {0} & {1}, N={2}".format(pair[0], pair[1], num_trials)
-        label = "Raw Data"
-        utils.plot_data(lags, y=cc_pair, color="r", title=title,
-                        ylim=[-1, 1], label=label, fill_error=3 * std_pair
-                        )
-        if not os.path.exists("./pairwise_ccs_experiment_averaged/"):
-            os.mkdir("./pairwise_ccs_experiment_averaged/")
+            lags = utils.ts_to_acorr_lags(session_data_dict[sess_list[0]].get_ts())
+            title = "Cross Correlation {0} & {1}, N={2}".format(pair[0], pair[1], num_trials)
+            label = "Raw Data"
+            utils.plot_data(lags, y=cc_pair, color="r", title=title,
+                            ylim=[-1, 1], label=label, fill_error=3 * std_pair,
+                            )
 
-        pair_flat = (pair[0].replace(" ", "_"), pair[1].replace(" ", "_"))
-        save_path = "./pairwise_ccs_experiment_averaged/" + "{0}_{1}_pc{2}_pc{3}.png".format(pair_flat[0], pair_flat[1],
-                                                                                             idx_pcs[0], idx_pcs[1])
-        label = "Whitened"
-        utils.plot_data(lags, y=ccw_pair, color="g", save_path=save_path,
-                        title=title, legend=True,
-                        ylim=[-1, 1], label=label, fill_error=3 * stdw_pair,
-                        vline=0, figsize=(16, 9)
-                        )
+            if not os.path.exists(os.path.join(DIR_SAVE, "pairwise_ccs_experiment_averaged")):
+                os.mkdir(os.path.join(DIR_SAVE, "pairwise_ccs_experiment_averaged"))
+
+            pair_flat = (pair[0].replace(" ", "_"), pair[1].replace(" ", "_"))
+            save_path = os.path.join(DIR_SAVE, "pairwise_ccs_experiment_averaged", "{0}_{1}_pc{2}_pc{3}.png".format(
+                pair_flat[0], pair_flat[1], idx_pcs[0],
+                idx_pcs[1]))
+            label = "Whitened"
+            utils.plot_data(lags, y=ccw_pair, color="g", save_path=save_path,
+                            title=title, legend=True,
+                            ylim=[-1, 1], label=label, fill_error=3 * stdw_pair,
+                            vline=0, figsize=(16, 9)
+                            )
+            plt.close()
+            zero_lags[pair] == ccw_pair[np.argwhere(np.isclose(lags, 0))]
+
+    z_sorted = sorted(zero_lags.items(), key=lambda x: x[1], reverse=True)
+
+
+def compute_experiment_pca(session_data_dict, **kwargs):
+    for idx, (sess_name, data) in enumerate(session_data_dict.items()):
+        print("Compute PC {0}/{1}".format(idx+1, len(session_data_dict.items())))
+        data.compute_pca_by_brain_region(**kwargs)
 
 # get all session regions (set)
 

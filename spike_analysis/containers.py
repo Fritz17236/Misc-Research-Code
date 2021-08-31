@@ -6,6 +6,7 @@ import os
 import h5py
 import numpy as np
 
+import constants
 import utils
 from constants import ENUM_LICK_LEFT, ENUM_LICK_RIGHT, ENUM_NO_LICK, THRESHOLD_FIRING_RATE_MIN
 from utils import get_session_firing_rates, load_mat, filter_by_firing_rate
@@ -79,10 +80,9 @@ class PersistentObject:
         Load an existing instance.
 
         """
-        temp_handle = open(self._record_path, 'r')
-        self._file_list = [f.rstrip() for f in temp_handle.readlines()]
-        temp_handle.close()
-        self._record_handle = open(self._record_path, 'a')
+        with open(self._record_path, 'r') as record_handle:
+            self._file_list = [f.rstrip() for f in record_handle.readlines()]
+
 
     def _create(self):
         """
@@ -120,7 +120,8 @@ class PersistentObject:
             return
         else:
             self._file_list.append(file_name)
-            print(file_name, file=self._record_handle)
+            with open(self._record_path, "a") as f:
+                print(file_name, file=f)
 
     def _get_file_record(self):
         """
@@ -140,10 +141,6 @@ class PersistentObject:
         """
         # TODO: implement delete function
         print("Delete not implemented. Delete {0} manually.".format(self._name))
-
-    def __del__(self):
-        if self._loaded:
-            self._record_handle.close()
 
 
 class Session(PersistentObject):
@@ -272,13 +269,84 @@ class Session(PersistentObject):
                 data_handle["neuron_unit_info"].resize((len(to_add),))
                 data_handle["neuron_unit_info"][...] = to_add
 
-            self._add_to_file_record(file_name)
+            if "task_stimulation" not in data_handle.keys():
+                data_handle.create_dataset(name="task_stimulation", data=data['task_stimulation'])
+
+            if "task_cue_time" not in data_handle.keys():
+                data_handle.create_dataset(name="task_cue_time", data=data['task_cue_time'])
+
+            if "task_delay_time" not in data_handle.keys():
+                data_handle.create_dataset(name="task_delay_time", data=data['task_delay_time'])
+
+            if "task_sample_time" not in data_handle.keys():
+                data_handle.create_dataset(name="task_sample_time", data=data['task_sample_time'])
+
+            # TODO: add task stimulation, task cue time, task delay time, filter by epoch
+        self._add_to_file_record(file_name)
 
     # Accessor methods (necessary to use wrapper?)
     @access_hd5
     def get_spike_times(self):
+        """
+        Get the spike times of the neurons as a 2d sparse array [num_neurons][num_trials].
+
+        :return:
+        """
         with h5py.File(self._data_path, "r") as data_handle:
             data = np.asarray(data_handle["spike_times"])
+        return data
+
+    @access_hd5
+    def get_task_stimulation(self):
+        """
+        Get the stimulation parameters for a given trial
+
+        :return: stims (2d numpy array of shape [num_trials], 4)
+        For each trial, the 4 columns are [
+        laser_power,
+         stim_type('1', '2', or '6', with 1,2,6 being left/right/both ALM perturbation),
+          laser_on_time,
+           laser_off_time]
+            (with reference to trial start time - need to subtract go cue time from it).
+        """
+        with h5py.File(self._data_path, "r") as data_handle:
+            data = np.asarray(data_handle["task_stimulation"])
+        return data
+
+    @access_hd5
+    def get_task_cue_times(self):
+        """
+        Get the stimulation parameters for a given trial
+
+        :return: stims (2d numpy array of shape [num_trials], 2)
+        First row is go cue time, second row is duration of response period
+        """
+        with h5py.File(self._data_path, "r") as data_handle:
+            data = np.asarray(data_handle["task_cue_time"])
+        return data
+
+    @access_hd5
+    def get_task_sample_times(self):
+        """
+        Get the stimulation parameters for a given trial
+
+        :return: stims (2d numpy array of shape [num_trials], 2)
+        First row is go sample time, second row is duration of sample period
+        """
+        with h5py.File(self._data_path, "r") as data_handle:
+            data = np.asarray(data_handle["task_sample_time"])
+        return data
+
+    @access_hd5
+    def get_task_delay_times(self):
+        """
+        Get the stimulation parameters for a given trial
+
+        :return: stims (2d numpy array of shape [num_trials], 2)
+        First row is go delay time, second row is duration of delay period
+        """
+        with h5py.File(self._data_path, "r") as data_handle:
+            data = np.asarray(data_handle["task_delay_time"])
         return data
 
     @access_hd5
@@ -300,7 +368,7 @@ class Session(PersistentObject):
         return data
 
     @access_hd5
-    def get_lick_directions(self):
+    def get_task_lick_directions(self):
         with h5py.File(self._data_path, "r") as data_handle:
             data = np.array(data_handle["lick_directions"]).copy().astype(object)
             data[data == ENUM_LICK_LEFT] = 'l'
@@ -357,7 +425,8 @@ class Session(PersistentObject):
                 raise KeyError("Region {0} not contained"
                                " within this session: {1}".format(region, self.get_session_brain_regions()))
 
-    def compute_firing_rate_pca_by_brain_region(self, num_pcs=2):
+    def compute_pca_by_brain_region(self, num_pcs=2, overwrite=False, mode='fr', dt=constants.BIN_WIDTH_DEFAULT,
+                                    t_start=constants.TIME_BEGIN_DEFAULT, t_stop=constants.TIME_END_DEFAULT):
         """
         Perform Principal Component Analysis on stored Firing Rates, Splitting by brain region
 
@@ -365,24 +434,38 @@ class Session(PersistentObject):
         :param num_pcs: number of principal components to compute.
         :return:
         """
-        # TODO: add overwrite toggle if clients want to recompute with different number of pcs on same session instance
 
         regions = self.get_session_brain_regions()
         if self.verbose:
             print("Performing Principal Component Analysis...", end='')
 
-        with h5py.File(self._data_path, "r") as data_handle:
+        with h5py.File(self._data_path, "a") as data_handle:
             if "pca_projections" in data_handle.keys() and "pca_components" in data_handle.keys():
-                if self.verbose:
-                    print("PCA Already Performed on Session {0} - skipping.".format(self._name))
-                return
+                if overwrite:
+                    del data_handle["pca_projections"]
+                    del data_handle['pca_components']
+                else:
+                    if self.verbose:
+                        print("PCA Already Performed on Session {0} - skipping.".format(self._name))
+                    return
+
+        ts = self.get_ts()
+
+
 
         for region in regions:
-            frs = self.get_firing_rates(region=region)
+            if mode == 'fr':
+                frs = self.get_firing_rates(region=region).copy()
+            elif mode == 'isi':
+                frs = utils.compute_trial_isis(self, dt, t_start, t_stop)
+
             (num_bins, num_trials, num_neurons) = frs.shape
             frs_concat = np.swapaxes(frs, 0, 2).reshape((num_neurons, num_bins * num_trials))
             pca = PCA(n_components=num_pcs, svd_solver="full")
-            pca.fit(frs_concat.T)
+            try:
+                pca.fit(frs_concat.T)
+            except FloatingPointError:
+                print("True divide by zero error encountered in pca for session {0}".format(self._name))
             fr_pcas = np.zeros((num_bins, num_trials, num_pcs))
 
             for j in range(num_pcs):

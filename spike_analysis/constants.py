@@ -3,14 +3,18 @@ constants.py  Configure default constants for data management and preprocessing
 """
 
 # Change these to suit your needs
-DIR_RAW = r"C:\Users\fritz\Desktop\MAP_data_2021May"  # data directory (mat files)
-DIR_SAVE = r"C:\Users\fritz\Desktop\session_data"     # directory to store persistent/computed data
+DIR_RAW = r"C:\Users\fritz\Desktop\MAP_data_2021May\subset"  # data directory (mat files)
+DIR_SAVE = r"C:\Users\fritz\Desktop\session_data\subset"     # directory to store persistent/computed data
 
 # Spike Rate Estimation
 TIME_BEGIN_DEFAULT = -3.0  # trial start time
 TIME_END_DEFAULT = 3.5  # trial end time
 BIN_WIDTH_DEFAULT = .05 # trial time is split into non-overlapping bins with this width
 THRESHOLD_FIRING_RATE_MIN = 1  # Lowest firing rate in Hz when filtering by firing rate
+SPIKE_TRAIN_DILUTION_BOUND = .006 # spike train dilution lower bound
+P_CRIT = .05  # p value for statistical signficance
+
+# (minimum interspike interval when computin spike train cch)
 
 ENUM_LICK_LEFT = 1
 ENUM_LICK_RIGHT = 0
