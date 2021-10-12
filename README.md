@@ -1,6 +1,9 @@
 # Misc-Research-Code
 Code for Various Research-Related Subjects
 
+### spike_analysis
+- Tools for interacting with raw spike data
+
 ### van_der_pol_1_15_2020.py:
 - RK4 Numerical Simulations for Exploring Stability/Convergence of Van der Pol Oscillator 1/15/2020
 - probes phase reduction approximation & error
@@ -13,4 +16,3 @@ Code for Various Research-Related Subjects
  of limit-cycle oscillators. 
 ### Homeostatic Spiking Framework
 - Computational Models of Spiking Neural Networks 
- 

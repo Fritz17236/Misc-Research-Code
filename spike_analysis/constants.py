@@ -3,8 +3,8 @@ constants.py  Configure default constants for data management and preprocessing
 """
 
 # Change these to suit your needs
-DIR_RAW = r"C:\Users\fritz\Desktop\MAP_data_2021May\subset"  # data directory (mat files)
-DIR_SAVE = r"C:\Users\fritz\Desktop\session_data\subset"     # directory to store persistent/computed data
+DIR_RAW = r"C:\Users\fritz\Desktop\MAP_data_2021May"  # data directory (mat files)
+DIR_SAVE = r"C:\Users\fritz\Desktop\session_data"     # directory to store persistent/computed data
 
 # Spike Rate Estimation
 TIME_BEGIN_DEFAULT = -3.0  # trial start time
