@@ -4,10 +4,12 @@ utils.py Various utility functions, not all currently used.
 """
 from time import time
 
+import numpy
 import numpy as np
 import math
 
 import scipy.signal
+from sklearn.decomposition import PCA
 
 import constants
 from constants import TIME_END_DEFAULT, TIME_BEGIN_DEFAULT, BIN_WIDTH_DEFAULT
@@ -877,3 +879,44 @@ def filter_by_firing_rate(firing_rates, threshold=1):
     return firing_rates_filtered, keep_neurons
 
 # endregion
+def filter_firing_rates_by_time(frs,ts, t_starts, t_ends):
+    """
+    truncate firing rates to fall between two sets of times.
+    :param frs: (num_bins, num_trials, num_neurons) firing rate data
+    :param t_starts: (num_trials, 1) start times
+    :param t_ends:  (num_trials, 1) end times
+    :return: filtered_frs (num_neurons, num_bins_stacked) concatenated filtered firing rates
+    """
+
+    for idx_trial, t_start in enumerate(t_starts):
+        t_end = t_ends[idx_trial]
+        mask = np.argwhere( (ts > t_start) & (ts < t_end))
+        slice = frs[mask, idx_trial, :].squeeze()
+
+        if idx_trial == 0:
+            frs_filt = slice
+        else:
+            frs_filt = np.vstack((frs_filt, slice))
+    return frs_filt
+
+
+
+
+
+        # get firing rates for that trial between start and end time
+        # copy the data
+        # stack onto total firing rate data
+
+
+def pca(num_pcs, frs):
+    (num_bins, num_trials, num_neurons) = frs.shape
+    frs_concat = np.swapaxes(frs, 0, 2).reshape((num_neurons, num_bins * num_trials))
+    pca = PCA(n_components=num_pcs, svd_solver="full")
+    pca.fit(frs_concat.T)
+    fr_pcas = np.zeros((num_bins, num_trials, num_pcs))
+    components = np.zeros((num_neurons, num_pcs))
+    for j in range(num_pcs):
+        component = pca.components_[j, :]
+        components[:, j] = component
+        fr_pcas[:, :, j] = np.tensordot(frs, component, axes=1)
+    return fr_pcas, components, pca.explained_variance_

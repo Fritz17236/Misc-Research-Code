@@ -8,16 +8,14 @@ import multiprocessing as mp
 import traceback
 from collections import defaultdict
 import os
-from time import time
 
-from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 import constants
 from constants import DIR_RAW, DIR_SAVE
 from utils import ts_to_acorr_lags, get_psd, get_whitening_filter, \
     autocorrelation, apply_filter, cross_correlation, \
-    spike_train_cch_raw
+    spike_train_cch_raw, filter_firing_rates_by_time, pca
 import utils
 import numpy as np
 import matplotlib.pyplot as plt
@@ -411,20 +409,6 @@ def pca_by_epoch(session: Session, region='left ALM', num_pcs = 5):
 
         return frs[:, mask, :], mask
 
-
-    def pca(frs):
-        (num_bins, num_trials, num_neurons) = frs.shape
-        frs_concat = np.swapaxes(frs, 0, 2).reshape((num_neurons, num_bins * num_trials))
-        pca = PCA(n_components=num_pcs, svd_solver="full")
-        pca.fit(frs_concat.T)
-        fr_pcas = np.zeros((num_bins, num_trials, num_pcs))
-        components = np.zeros((num_neurons, num_pcs))
-        for j in range(num_pcs):
-            component = pca.components_[j, :]
-            components[:, j] = component
-            fr_pcas[:, :, j] = np.tensordot(frs, component, axes=1)
-        return fr_pcas, components, pca.explained_variance_
-
     def pca_epoch(frs_filtered, frs_full):
         (num_bins, num_trials, num_neurons) = frs_full.shape
         pca = PCA(n_components=num_pcs, svd_solver="full")
@@ -436,34 +420,6 @@ def pca_by_epoch(session: Session, region='left ALM', num_pcs = 5):
             components[:, j] = component
             fr_pcas[:, :, j] = np.tensordot(frs_full, component, axes=1)
         return fr_pcas, components, pca.explained_variance_
-
-    def filter_firing_rates_by_time(frs,ts, t_starts, t_ends):
-        """
-        truncate firing rates to fall between two sets of times.
-        :param frs: (num_bins, num_trials, num_neurons) firing rate data
-        :param t_starts: (num_trials, 1) start times
-        :param t_ends:  (num_trials, 1) end times
-        :return: filtered_frs (num_neurons, num_bins_stacked) concatenated filtered firing rates
-        """
-
-        for idx_trial, t_start in enumerate(t_starts):
-            t_end = t_ends[idx_trial]
-            mask = np.argwhere( (ts > t_start) & (ts < t_end))
-            slice = frs[mask, idx_trial, :].squeeze()
-
-            if idx_trial == 0:
-                frs_filt = slice
-            else:
-                frs_filt = np.vstack((frs_filt, slice))
-        return frs_filt
-
-
-
-
-
-            # get firing rates for that trial between start and end time
-            # copy the data
-            # stack onto total firing rate data
 
     def firing_rates_by_epoch(frs, session, epoch, trial_mask):
         epochs = ['sample', 'delay', 'response']
@@ -494,7 +450,7 @@ def pca_by_epoch(session: Session, region='left ALM', num_pcs = 5):
     frs, trial_mask = filter_firing_rates_by_stim_type(session.get_firing_rates(region=region), session)
 
     # compute overall pca
-    fr_pcas, components, spectrum = pca(frs)
+    fr_pcas, components, spectrum = pca(num_pcs, frs)
     pcs_by_epoch['all'] = (fr_pcas, components, spectrum)
 
     epochs = ['sample', 'delay', 'response', 'pre-sample']
@@ -505,11 +461,66 @@ def pca_by_epoch(session: Session, region='left ALM', num_pcs = 5):
     return pcs_by_epoch
 
 
+def whitened_left_right_alm_crosscorr(session: Session, num_pcs = 5):
+    """
+    Compute the whitneed cross corrleation of each of [num_pcs] principal component pairs (across left/right hemisphere).
+
+    :param session: session data containing left and right ALM activity
+    :param num_pcs:  number of pcs to compute
+    :return: ccrs, num_trials : cross correlation with size (num_bins) summed over num_trials.
+    """
+    # first check both left and right hemispheres are in this session, if not return none
+
+    regions = session.get_session_brain_regions()
+    if not (('left ALM' in regions) and ('right ALM' in regions)):
+        return None
+    else:
+        # then select activity during the post-sample epoch (t > 0)
+        ts = session.get_ts()
+        start_idx = np.argwhere(ts > 0)[0][0]
+        assert(np.all(ts[start_idx:] > 0))
+        frs = session.get_firing_rates()[start_idx:, :, :] # select only firing rates computed after start_idx
+
+        left_neurons = session.get_neuron_brain_regions() == 'left ALM'
+        right_neurons = session.get_neuron_brain_regions() == 'right ALM'
+
+        left_frs = frs[:, :, left_neurons]
+        right_frs = frs[:, :, right_neurons]
+
+        # compute the pcs, projections  of that activity for each hemisphere
+        _, left_components, left_spectrum = pca(num_pcs, left_frs)
+        _, right_components, right_spectrum = pca(num_pcs, right_frs)
+
+
+        left_frs_full = session.get_firing_rates()[:, :, left_neurons]
+        right_frs_full = session.get_firing_rates()[:, :, right_neurons]
+        left_fr_pc = np.zeros((left_frs_full.shape[0], left_frs_full.shape[1], num_pcs))
+        right_fr_pc = np.zeros((right_frs_full.shape[0], right_frs_full.shape[1], num_pcs))
+
+        for j in range(num_pcs):
+            left_fr_pc[:, :, j] = np.tensordot(left_frs_full, left_components[:, j], axes=1)
+            right_fr_pc[:, :, j] = np.tensordot(right_frs_full, right_components[:, j], axes=1)
+
+        lags = ts_to_acorr_lags(ts)
+        num_trials = left_fr_pc.shape[1]
+
+        ccrs = np.zeros((len(lags), num_trials, num_pcs))
+        for idx_pc in range(num_pcs):
+            for idx_trial in range(num_trials):
+                left_traj = left_fr_pc[:, idx_trial, idx_pc]
+                right_traj = right_fr_pc[:, idx_trial, idx_pc]
+                ccrs[:, idx_trial, idx_pc] = utils.get_whitened_cross_correlation(x=left_traj, y=right_traj, fs=ts[3]-ts[2], bandwidth=np.inf, mode='highpass')
+
+        ccrs[np.isnan(ccrs)] = 0
+        return ccrs.sum(axis=1), num_trials
+        # whiten both left and right trjaectories w.r.t. left trajectory
+        # run cross-correlation of each add to running sums, num trials
+
+    # return  sum, num trials
 # endregion
 
 
 # region Multi-Session Scripts
-
 
 def get_all_session_brain_regions(session_data_dict):
     """
@@ -712,50 +723,78 @@ def compute_experiment_pca(session_data_dict, **kwargs):
         print("Compute PC {0}/{1}".format(idx+1, len(session_data_dict.items())))
         data.compute_pca_by_brain_region(**kwargs)
 
-# get all session regions (set)
 
-# get all pairs of brain regions
+def epoch_based_pca(session_data_dict):
+    colors = {
+        'all': 'k',
+        'sample': 'r',
+        'delay': 'g',
+        'response': 'b',
+        'pre-sample': 'y',
+    }
+    epochs = ['all', 'sample', 'delay', 'response', 'pre-sample']
+    projs = defaultdict(list)
+    # comps = defaultdict(list)
+    spects = defaultdict(list)
+    num_trials = 0
+    for sess in session_data_dict.values():
+        try:
+            data = pca_by_epoch(sess, num_pcs=10)
+            epochs = [k for k in data.keys()]
+            num_trials += data['all'][0].shape[1]
+            for e in epochs:
+                fr_pcs, components, spectrum = data[e]
+                projs[e].append(fr_pcs.sum(axis=1)[:, 0])  # get trial-averaged first PC
+                # comps[e].append(components[:,0]) # get first PC
+                plt.figure("comps")
+                plt.plot(np.arange(components.shape[0]) + 1, components[:, 0], label=e, color=colors[e])
+                plt.title("First Principal Component")
+                plt.xlabel("Neuron Number")
+                plt.ylabel("Weight")
 
-# get names of all sessions that contain both pairs
+                spects[e].append(spectrum / np.sum(spectrum))
+        except KeyError:
+            continue
+        break
+    plt.legend()
+    plt.savefig("comps.png", bbox_inches='tight', dpi=128)
+    plt.show()
+    num_sessions = len(projs['all'])
+    num_bins = len(projs['all'][0])
+    num_pcs = len(spects['all'][0])
+    ts = sess.get_ts()
+    for e in epochs:
+        data_projs = np.zeros((num_sessions, num_bins))
+        data_spects = np.zeros((num_sessions, num_pcs))
+        # data_comps = np.zeros((num_sessions, num_neurons))
+        for idx_sess in range(num_sessions):
+            data_projs[idx_sess, :] = projs[e][idx_sess]
+            data_spects[idx_sess, :] = spects[e][idx_sess]
 
-# endregion
+        plt.figure("projections")
+        plt.title("1st PC Projection, Average N = {0} Trials ({1} Sessions)".format(num_trials, num_sessions))
+        plt.ylabel("Projection of Activity onto PC1 (Unitless)")
+        plt.xlabel("Trial Time (s)")
+        mu = data_projs.sum(axis=0) / num_trials
+        sig = data_projs.std(axis=0) / np.sqrt(num_trials) * 0
+        plt.plot(ts, mu, label=e, c=colors[e])
+        plt.fill_between(ts, mu - sig, mu + sig, alpha=.2, color=colors[e])
 
-
-# region Other
-def foo(idx_pair, neuron_pairs, spike_times, num_trials,  RNG, BIN_WIDTH, return_list):
-    # region TRIAL AVERAGED CCH
-    # run first trial to get lags and shape to initialize data
-
-    idx_trigger_neuron = neuron_pairs[idx_pair][0]
-    idx_reference_neuron = neuron_pairs[idx_pair][1]
-
-    idx_trial = 0
-    trig = spike_times[idx_trigger_neuron, idx_trial]
-    ref = spike_times[idx_reference_neuron, idx_trial]
-
-
-    cch = utils.spike_train_cch_raw(trig, ref, rng=RNG, bin_width=.001 * BIN_WIDTH)
-    # intialize data and store results from first trial
-    cchs = np.zeros((2 * RNG + 1, num_trials))
-    cchs[:, 0] = cch
-
-    # now run for the rest of the trials
-    for idx_trial in range(1, num_trials):
-        trig = spike_times[idx_trigger_neuron, idx_trial]
-        ref = spike_times[idx_reference_neuron, idx_trial]
-        cchs[:, idx_trial] = utils.spike_train_cch_raw(trig=trig, ref=ref, rng=RNG, bin_width=.001 * BIN_WIDTH)
-    # endregion
-
-    return_list.append((cchs.mean(axis=1), cchs.std(axis=1)))
-
-
-def bar(spike_times, neuron_pairs, idx_pair, rng, bin_width, window_width, p_crit, significance_list):
-    idx_trigger_neuron = neuron_pairs[idx_pair][0]
-    idx_reference_neuron = neuron_pairs[idx_pair][1]
-    significance_counts = trial_averaged_cch_significance_counts(spike_times, idx_trigger_neuron,
-                                                                         idx_reference_neuron, rng, bin_width,
-                                                                         window_width, p_crit, trial_len=constants.TIME_END_DEFAULT-constants.TIME_BEGIN_DEFAULT)
-    significance_list.append(significance_counts)
+        plt.figure('spectra')
+        plt.xlabel("PC Number")
+        plt.ylabel("Fraction Variance Explained")
+        mu = data_spects.mean(axis=0)
+        sig = data_spects.std(axis=0) / np.sqrt(num_sessions) * 0
+        plt.title(
+            "PC Spectra (Explained Variance, Average N = {0} Trials, ({1} Sessions)".format(num_trials, num_sessions))
+        plt.plot(np.arange(start=1, stop=num_pcs + 1), mu, label=e, c=colors[e])
+        plt.fill_between(np.arange(start=1, stop=num_pcs + 1), mu - sig, mu + sig, alpha=.2, color=colors[e])
+    plt.legend()
+    plt.savefig("avg_spects.png", bbox_inches='tight', dpi=128)
+    plt.figure("projections")
+    plt.legend()
+    plt.savefig("avg_projs.png", bbox_inches='tight', dpi=128)
+    plt.show()
 
 
 def cch_analysis_multithreaded(sess_data):
@@ -986,5 +1025,47 @@ def cch_analysis_multithreaded(sess_data):
     # plt.plot(sess_data.get_ts(), frs[:, 0, 0], label='Binned Firing Rates')
     #
     # plt.show()
+
+# endregion
+
+
+# region Other
+def foo(idx_pair, neuron_pairs, spike_times, num_trials,  RNG, BIN_WIDTH, return_list):
+    # region TRIAL AVERAGED CCH
+    # run first trial to get lags and shape to initialize data
+
+    idx_trigger_neuron = neuron_pairs[idx_pair][0]
+    idx_reference_neuron = neuron_pairs[idx_pair][1]
+
+    idx_trial = 0
+    trig = spike_times[idx_trigger_neuron, idx_trial]
+    ref = spike_times[idx_reference_neuron, idx_trial]
+
+
+    cch = utils.spike_train_cch_raw(trig, ref, rng=RNG, bin_width=.001 * BIN_WIDTH)
+    # intialize data and store results from first trial
+    cchs = np.zeros((2 * RNG + 1, num_trials))
+    cchs[:, 0] = cch
+
+    # now run for the rest of the trials
+    for idx_trial in range(1, num_trials):
+        trig = spike_times[idx_trigger_neuron, idx_trial]
+        ref = spike_times[idx_reference_neuron, idx_trial]
+        cchs[:, idx_trial] = utils.spike_train_cch_raw(trig=trig, ref=ref, rng=RNG, bin_width=.001 * BIN_WIDTH)
+    # endregion
+
+    return_list.append((cchs.mean(axis=1), cchs.std(axis=1)))
+
+
+def bar(spike_times, neuron_pairs, idx_pair, rng, bin_width, window_width, p_crit, significance_list):
+    idx_trigger_neuron = neuron_pairs[idx_pair][0]
+    idx_reference_neuron = neuron_pairs[idx_pair][1]
+    significance_counts = trial_averaged_cch_significance_counts(spike_times, idx_trigger_neuron,
+                                                                         idx_reference_neuron, rng, bin_width,
+                                                                         window_width, p_crit, trial_len=constants.TIME_END_DEFAULT-constants.TIME_BEGIN_DEFAULT)
+    significance_list.append(significance_counts)
+
+
+
 
 # endregion
