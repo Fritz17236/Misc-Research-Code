@@ -908,7 +908,7 @@ def filter_firing_rates_by_time(frs,ts, t_starts, t_ends):
         # stack onto total firing rate data
 
 
-def pca(num_pcs, frs):
+def pca(num_pcs, frs, stationary=False):
     (num_bins, num_trials, num_neurons) = frs.shape
     frs_concat = np.swapaxes(frs, 0, 2).reshape((num_neurons, num_bins * num_trials))
     pca = PCA(n_components=num_pcs, svd_solver="full")
@@ -920,3 +920,19 @@ def pca(num_pcs, frs):
         components[:, j] = component
         fr_pcas[:, :, j] = np.tensordot(frs, component, axes=1)
     return fr_pcas, components, pca.explained_variance_
+
+
+def filter_firing_rates_by_stim_type(frs, session, type='none'):
+    """
+    Select only firing rates whose trials corrspond to a given stimulation type:
+
+    :param frs: firing rates (num_bins, num_trials, num_neurons)
+    :param session:  Session instance
+    :return: frs_filt (num_bins, num_trials_filtered, num_neurons) filtered data, trial_mask boolean numpy 1-vector
+    """
+    if type == 'none':
+
+        stims = session.get_task_stimulation()
+        mask = stims[:,0] == 0
+
+    return frs[:, mask, :], mask

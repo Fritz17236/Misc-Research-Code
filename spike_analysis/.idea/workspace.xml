@@ -6,9 +6,10 @@
   <component name="ChangeListManager">
     <list default="true" id="9b98d005-0bf2-4593-a248-aaeb4c4c4c78" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/avg_projs.png" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/avg_spects.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/comps.png" beforeDir="false" afterPath="$PROJECT_DIR$/comps.png" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/constants.py" beforeDir="false" afterPath="$PROJECT_DIR$/constants.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pc_crosscorr_58_sess.png" beforeDir="false" afterPath="$PROJECT_DIR$/pc_crosscorr_58_sess.png" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/scripts.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils.py" afterDir="false" />
     </list>
@@ -186,17 +187,12 @@
         </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/scripts.py</url>
-          <line>307</line>
+          <line>310</line>
           <option name="timeStamp" value="44" />
         </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/scripts.py</url>
-          <line>410</line>
-          <option name="timeStamp" value="46" />
-        </line-breakpoint>
-        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
-          <url>file://$PROJECT_DIR$/scripts.py</url>
-          <line>1032</line>
+          <line>1153</line>
           <option name="timeStamp" value="47" />
         </line-breakpoint>
       </breakpoints>

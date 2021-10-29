@@ -9,13 +9,16 @@ import traceback
 from collections import defaultdict
 import os
 
+import statsmodels
+from  statsmodels.tsa.stattools import adfuller, kpss
+
 from tqdm import tqdm
 
 import constants
 from constants import DIR_RAW, DIR_SAVE
 from utils import ts_to_acorr_lags, get_psd, get_whitening_filter, \
     autocorrelation, apply_filter, cross_correlation, \
-    spike_train_cch_raw, filter_firing_rates_by_time, pca
+    spike_train_cch_raw, filter_firing_rates_by_time, pca, filter_firing_rates_by_stim_type
 import utils
 import numpy as np
 import matplotlib.pyplot as plt
@@ -384,7 +387,7 @@ def compute_session_cch_predictors(session):
     pass
 
 
-def pca_by_epoch(session: Session, region='left ALM', num_pcs = 5):
+def pca_by_epoch(session: Session, region='left ALM', num_pcs = 5, diff=False, log=False):
     """
     Compute the pca for each epoch of session
 
@@ -394,20 +397,7 @@ def pca_by_epoch(session: Session, region='left ALM', num_pcs = 5):
     :param num_pcs: number of principal components to compute
     :return pcs_by_epoch: Dictionary whose keys are the epoch and whose values are principal component data
     """
-    def filter_firing_rates_by_stim_type(frs, session, type='none'):
-        """
-        Select only firing rates whose trials corrspond to a given stimulation type:
 
-        :param frs: firing rates (num_bins, num_trials, num_neurons)
-        :param session:  Session instance
-        :return: frs_filt (num_bins, num_trials_filtered, num_neurons) filtered data
-        """
-        if type == 'none':
-
-            stims = session.get_task_stimulation()
-            mask = stims[:,0] == 0
-
-        return frs[:, mask, :], mask
 
     def pca_epoch(frs_filtered, frs_full):
         (num_bins, num_trials, num_neurons) = frs_full.shape
@@ -444,16 +434,26 @@ def pca_by_epoch(session: Session, region='left ALM', num_pcs = 5):
 
         return filter_firing_rates_by_time(frs,session.get_ts(), t_starts, t_ends)
 
+    epochs = ['sample', 'delay', 'response', 'pre-sample']
     pcs_by_epoch = {}
 
     # firing rates, selecting only non-stimulation trials for PC comptutation
     frs, trial_mask = filter_firing_rates_by_stim_type(session.get_firing_rates(region=region), session)
 
+    if diff:
+        # make firing rates diff in time via first differnce
+        frs[:-1, :, :] = np.diff(frs, axis=0)
+
+    if log:
+        frs = np.log(frs)
+        frs[np.isnan(frs)] = 0
+        frs[np.isinf(frs)] = 0
+
+
     # compute overall pca
     fr_pcas, components, spectrum = pca(num_pcs, frs)
     pcs_by_epoch['all'] = (fr_pcas, components, spectrum)
 
-    epochs = ['sample', 'delay', 'response', 'pre-sample']
     for epoch in epochs:
         frs_filtered = firing_rates_by_epoch(frs, session, epoch, trial_mask)
         pcs_by_epoch[epoch] = pca_epoch(frs_filtered, frs)
@@ -479,7 +479,8 @@ def whitened_left_right_alm_crosscorr(session: Session, num_pcs = 5):
         ts = session.get_ts()
         start_idx = np.argwhere(ts > 0)[0][0]
         assert(np.all(ts[start_idx:] > 0))
-        frs = session.get_firing_rates()[start_idx:, :, :] # select only firing rates computed after start_idx
+
+        frs, trial_mask = filter_firing_rates_by_stim_type(session.get_firing_rates()[start_idx:, :, :], session)
 
         left_neurons = session.get_neuron_brain_regions() == 'left ALM'
         right_neurons = session.get_neuron_brain_regions() == 'right ALM'
@@ -492,8 +493,8 @@ def whitened_left_right_alm_crosscorr(session: Session, num_pcs = 5):
         _, right_components, right_spectrum = pca(num_pcs, right_frs)
 
 
-        left_frs_full = session.get_firing_rates()[:, :, left_neurons]
-        right_frs_full = session.get_firing_rates()[:, :, right_neurons]
+        left_frs_full = session.get_firing_rates()[:, :, left_neurons][:, trial_mask, :]
+        right_frs_full = session.get_firing_rates()[:, :, right_neurons][:, trial_mask, :]
         left_fr_pc = np.zeros((left_frs_full.shape[0], left_frs_full.shape[1], num_pcs))
         right_fr_pc = np.zeros((right_frs_full.shape[0], right_frs_full.shape[1], num_pcs))
 
@@ -512,7 +513,7 @@ def whitened_left_right_alm_crosscorr(session: Session, num_pcs = 5):
                 ccrs[:, idx_trial, idx_pc] = utils.get_whitened_cross_correlation(x=left_traj, y=right_traj, fs=ts[3]-ts[2], bandwidth=np.inf, mode='highpass')
 
         ccrs[np.isnan(ccrs)] = 0
-        return ccrs.sum(axis=1), num_trials
+        return ccrs.sum(axis=1), ccrs.std(axis=1) / np.sqrt(num_trials),  num_trials
         # whiten both left and right trjaectories w.r.t. left trajectory
         # run cross-correlation of each add to running sums, num trials
 
@@ -739,26 +740,34 @@ def epoch_based_pca(session_data_dict):
     num_trials = 0
     for sess in session_data_dict.values():
         try:
-            data = pca_by_epoch(sess, num_pcs=10)
+            data = pca_by_epoch(sess, num_pcs=10, diff=True, log=True)
             epochs = [k for k in data.keys()]
             num_trials += data['all'][0].shape[1]
+            adfs = {}
+            kps = {}
             for e in epochs:
                 fr_pcs, components, spectrum = data[e]
                 projs[e].append(fr_pcs.sum(axis=1)[:, 0])  # get trial-averaged first PC
                 # comps[e].append(components[:,0]) # get first PC
+
+
                 plt.figure("comps")
                 plt.plot(np.arange(components.shape[0]) + 1, components[:, 0], label=e, color=colors[e])
                 plt.title("First Principal Component")
                 plt.xlabel("Neuron Number")
                 plt.ylabel("Weight")
+                # adfs[e] = np.mean([adfuller(fr_pcs[:, idx_trial, 0])[1] for idx_trial in range(num_trials)])
+                # kps[e] = np.mean([kpss(fr_pcs[:, idx_trial, 0], regression='ct')[1] for idx_trial in range(num_trials)])
+
 
                 spects[e].append(spectrum / np.sum(spectrum))
         except KeyError:
             continue
         break
+
     plt.legend()
     plt.savefig("comps.png", bbox_inches='tight', dpi=128)
-    plt.show()
+
     num_sessions = len(projs['all'])
     num_bins = len(projs['all'][0])
     num_pcs = len(spects['all'][0])
@@ -771,14 +780,30 @@ def epoch_based_pca(session_data_dict):
             data_projs[idx_sess, :] = projs[e][idx_sess]
             data_spects[idx_sess, :] = spects[e][idx_sess]
 
+        # plt.figure("projections")
+        # plt.title("1st PC Projection, Average N = {0} Trials ({1} Sessions)".format(num_trials, num_sessions))
+        # plt.ylabel("Projection of Activity onto PC1 (Unitless)")
+        # plt.xlabel("Trial Time (s)")
+        # mu = data_projs.sum(axis=0) / num_trials
+        # sig = data_projs.std(axis=0) / np.sqrt(num_trials) * 0
+        # ts = ts[:len(mu)]
+        # plt.plot(ts, mu, label=e, c=colors[e])
+        # plt.fill_between(ts, mu - sig, mu + sig, alpha=.2, color=colors[e])
+
+
+
         plt.figure("projections")
-        plt.title("1st PC Projection, Average N = {0} Trials ({1} Sessions)".format(num_trials, num_sessions))
+        plt.title("Differenced, Logged Firing Rates, Average N = {0} Trials ({1} Sessions)".format(num_trials, num_sessions))
         plt.ylabel("Projection of Activity onto PC1 (Unitless)")
         plt.xlabel("Trial Time (s)")
         mu = data_projs.sum(axis=0) / num_trials
         sig = data_projs.std(axis=0) / np.sqrt(num_trials) * 0
+        ts = ts[:len(mu)]
         plt.plot(ts, mu, label=e, c=colors[e])
-        plt.fill_between(ts, mu - sig, mu + sig, alpha=.2, color=colors[e])
+        adfs[e] = adfuller(mu)
+        kps[e] = kpss(mu, regression='ct')
+
+
 
         plt.figure('spectra')
         plt.xlabel("PC Number")
@@ -789,13 +814,109 @@ def epoch_based_pca(session_data_dict):
             "PC Spectra (Explained Variance, Average N = {0} Trials, ({1} Sessions)".format(num_trials, num_sessions))
         plt.plot(np.arange(start=1, stop=num_pcs + 1), mu, label=e, c=colors[e])
         plt.fill_between(np.arange(start=1, stop=num_pcs + 1), mu - sig, mu + sig, alpha=.2, color=colors[e])
+
+
+
+
+
     plt.legend()
     plt.savefig("avg_spects.png", bbox_inches='tight', dpi=128)
     plt.figure("projections")
     plt.legend()
     plt.savefig("avg_projs.png", bbox_inches='tight', dpi=128)
+
+    for e in adfs.keys():
+        print("Epoch: {2}  - ADF: {0} - KPSS: {1}".format(adfs[e], kps[e], e))
+
+    vvt = np.zeros(ts.shape)
+    mvt = np.zeros(ts.shape)
+    win_len = 5
+
+    frs, trial_mask = filter_firing_rates_by_stim_type(sess.get_firing_rates(region='left ALM'), sess)
+    print(frs.shape)
+
+    frs = frs.mean(axis=(1,2))
+    for i in range(win_len, len(vvt)):
+        vvt[i] = np.std(frs[i - win_len:i])
+        mvt[i] = np.mean(frs[i - win_len:i])
+    dt = ts[1] - ts[0]
+    win_size = dt * win_len
+
+    plt.figure("varvt")
+    plt.title("Sample Standard Deviation & Mean vs Time, Sliding Window of {0} ms".format(np.round(1000*win_size)))
+    plt.xlabel("Elapsed Time (s)")
+    plt.ylabel("Value (Hz)")
+    plt.plot(ts, vvt, label='Standard Deviation')
+    plt.plot(ts, mvt, label='Mean')
+    plt.legend()
+    plt.savefig("varvt.png", bbox_inches='tight', dpi=128)
     plt.show()
 
+
+def least_squares_prediction(session):
+    def fit(X, b):
+        from sklearn.model_selection import train_test_split
+        X_train, X_test, b_train, b_test = train_test_split(X, b, test_size = 0.33, random_state = 42)
+        z_star = np.linalg.pinv(X_train) @ b_train
+        b_hat = X_test @ z_star
+        b_hat[b_hat > 0] = 1
+        b_hat[b_hat <= 0] = -1
+        # J = 1 / len(b_hat) * np.sum([(b[i] - b_hat[i])**2 for i in range(len(b))])**.5
+        correct = np.zeros(b_hat.shape)
+        for i, dir in enumerate(b_hat):
+            if b_hat[i] == b_test[i]:
+                correct[i] = 1
+
+        return np.mean(correct)
+
+    transformations = ['raw', 'diff', 'log', 'diff-log', 'log-diff']
+    frs_left, trial_mask = filter_firing_rates_by_stim_type(session.get_firing_rates(region='left ALM'), session)
+    frs_right, _ = filter_firing_rates_by_stim_type(session.get_firing_rates(region='right ALM'), session)
+    frs = np.concatenate((frs_left, frs_right), axis=2)
+    b = session.get_task_lick_directions()[trial_mask]
+    b = np.asarray([constants.ENUM_LICK_LEFT if d == 'l' else constants.ENUM_LICK_RIGHT for d in b])
+
+
+    ts = session.get_ts()
+    for t in transformations:
+        if t == 'raw':
+            frs_t = frs.copy()
+            ls = 'o'
+        elif t == 'diff':
+            frs_t = frs.copy()
+            frs_t[:-1] = np.diff(frs, axis=0)
+            ls = '.'
+        elif t == 'log':
+            frs_t = np.log(frs)
+            ls = '*'
+        elif t == 'diff-log':
+            frs_t = frs.copy()
+            frs_t[:-1] = np.diff(frs, axis=0)
+            frs_t = np.log(frs_t)
+            ls='x'
+        elif t == 'log-diff':
+            frs_t = frs.copy()
+            frs_t = np.log(frs_t)
+            frs_t[:-1] = np.diff(frs, axis=0)
+            ls = 'd'
+        else:
+            continue
+        frs_t[np.isnan(frs_t)] = 0
+        frs_t[np.isinf(frs_t)] = 0
+
+        fr_pcas, _, _ = pca(10, frs_t)
+        js = [fit(fr_pcas[idx_time, :, :], b) for idx_time in tqdm.tqdm(range(len(ts)))]
+        plt.figure("js")
+        plt.plot(ts, js, label=str(t), marker=ls)
+    plt.legend()
+    plt.show()
+
+    # for each of (raw, diff, log, diff-log, log-diff)
+        # apply transformation
+        # get pcs
+        # select a time point
+        # compute pc projs
+        # compute least squares predicition
 
 def cch_analysis_multithreaded(sess_data):
     spike_times = sess_data.get_spike_times().copy()

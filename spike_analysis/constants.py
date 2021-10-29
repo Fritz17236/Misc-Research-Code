@@ -17,8 +17,8 @@ P_CRIT = .05  # p value for statistical signficance
 # (minimum interspike interval when computin spike train cch)
 
 ENUM_LICK_LEFT = 1
-ENUM_LICK_RIGHT = 0
-ENUM_NO_LICK = -1
+ENUM_LICK_RIGHT = -1
+ENUM_NO_LICK = 0
 
 NEURON_UNIT_INFO_IDX = {
     'unit_id': 0,
