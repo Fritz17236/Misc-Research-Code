@@ -855,8 +855,15 @@ def epoch_based_pca(session_data_dict):
 
 def least_squares_prediction(session):
     def fit(X, b):
+        # trials x pcs
+        d = X.shape[1] // 2
+        x_l = X[:, :d]
+        x_r = X[:, :d]
+        cov = np.cov(x_l.T, x_r.T)
+        return np.trace(cov)
+
         from sklearn.model_selection import train_test_split
-        X_train, X_test, b_train, b_test = train_test_split(X, b, test_size = 0.33, random_state = 42)
+        X_train, X_test, b_train, b_test = train_test_split(X, b, test_size = 0.10, random_state = 42)
         z_star = np.linalg.pinv(X_train) @ b_train
         b_hat = X_test @ z_star
         b_hat[b_hat > 0] = 1
@@ -904,6 +911,8 @@ def least_squares_prediction(session):
         frs_t[np.isnan(frs_t)] = 0
         frs_t[np.isinf(frs_t)] = 0
 
+        # want to study difference between hemispheres
+        # look at covariance between two rnadom vectors
         fr_pcas, _, _ = pca(10, frs_t)
         js = [fit(fr_pcas[idx_time, :, :], b) for idx_time in tqdm.tqdm(range(len(ts)))]
         plt.figure("js")
@@ -911,12 +920,14 @@ def least_squares_prediction(session):
     plt.legend()
     plt.show()
 
-    # for each of (raw, diff, log, diff-log, log-diff)
+
+    # for ea   ch of (raw, diff, log, diff-log, log-diff)
         # apply transformation
         # get pcs
         # select a time point
         # compute pc projs
         # compute least squares predicition
+
 
 def cch_analysis_multithreaded(sess_data):
     spike_times = sess_data.get_spike_times().copy()
