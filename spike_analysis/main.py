@@ -15,7 +15,8 @@ if __name__ == '__main__':
     session_data_dict = scripts.load_all_session_data(verbose=False)
     for sess in session_data_dict.values():
         try:
-            scripts.least_squares_prediction(sess)
+            scripts.epoch_based_pca(session_data_dict)
+            # scripts.least_squares_prediction(sess, True)
         except KeyError:
             continue
 

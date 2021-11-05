@@ -830,30 +830,70 @@ def epoch_based_pca(session_data_dict):
 
     vvt = np.zeros(ts.shape)
     mvt = np.zeros(ts.shape)
+    vvt2 = np.zeros(ts.shape)
+    mvt2 = np.zeros(ts.shape)
+    vvt3 = np.zeros(ts.shape)
+    mvt3 = np.zeros(ts.shape)
+
     win_len = 5
 
     frs, trial_mask = filter_firing_rates_by_stim_type(sess.get_firing_rates(region='left ALM'), sess)
     print(frs.shape)
 
-    frs = frs.mean(axis=(1,2))
+    frs_t = frs.mean(axis=(1,2))
+    frs_t2 = (np.diff(frs, axis=0)).mean(axis=(1, 2))
+
+    frs_t3 = np.log(frs)
+    frs_t3[np.isnan(frs_t3)] = 0
+    frs_t3[np.isinf(frs_t3)] = 0
+    frs_t3 = (np.diff(frs_t3, axis=0)).mean(axis=(1, 2))
     for i in range(win_len, len(vvt)):
-        vvt[i] = np.std(frs[i - win_len:i])
-        mvt[i] = np.mean(frs[i - win_len:i])
+        vvt[i] = np.std(frs_t[i - win_len:i])
+        vvt2[i] = np.std(frs_t2[i - win_len:i])
+        vvt3[i] = np.std(frs_t3[i - win_len:i])
+
     dt = ts[1] - ts[0]
     win_size = dt * win_len
 
     plt.figure("varvt")
-    plt.title("Sample Standard Deviation & Mean vs Time, Sliding Window of {0} ms".format(np.round(1000*win_size)))
+    plt.title("Sample Standard Deviation vs Time, Sliding Window of {0} ms".format(np.round(1000*win_size)))
     plt.xlabel("Elapsed Time (s)")
     plt.ylabel("Value (Hz)")
-    plt.plot(ts, vvt, label='Standard Deviation')
-    plt.plot(ts, mvt, label='Mean')
+    plt.plot(ts, vvt, label='Raw')
+    plt.plot(ts, vvt2, label='Diff')
+    plt.plot(ts, vvt3, label='Log-Diff')
     plt.legend()
-    plt.savefig("varvt.png", bbox_inches='tight', dpi=128)
+    plt.savefig("varvt_trans.png", bbox_inches='tight', dpi=128)
+
+
+    for i in range(win_len, len(vvt)):
+        mvt2[i] = np.mean(frs_t2[i - win_len:i])
+        mvt[i] = np.mean(frs_t[i - win_len:i])
+        mvt3[i] = np.mean(frs_t3[i - win_len:i])
+    dt = ts[1] - ts[0]
+    win_size = dt * win_len
+
+    # plt.plot(ts, mvt, label='Mean')
+
+    plt.figure("meanvt")
+    plt.title("Sample Mean vs Time, Sliding Window of {0} ms".format(np.round(1000 * win_size)))
+    plt.xlabel("Elapsed Time (s)")
+    plt.ylabel("Value (Hz)")
+    plt.plot(ts, mvt, label='Raw')
+    plt.plot(ts, mvt2, label='Diff')
+    plt.plot(ts, mvt3, label='Log-Diff')
+    plt.legend()
+    plt.savefig("meanvt_trans.png",bbox_inches='tight', dpi=128)
+
+
+
+
+
+    # plt.savefig("varvt.png", bbox_inches='tight', dpi=128)
     plt.show()
 
 
-def least_squares_prediction(session):
+def least_squares_prediction(session, invert=False):
     def fit(X, b):
         from sklearn.model_selection import train_test_split
         X_train, X_test, b_train, b_test = train_test_split(X, b, test_size = 0.33, random_state = 42)
@@ -886,29 +926,44 @@ def least_squares_prediction(session):
             frs_t = frs.copy()
             frs_t[:-1] = np.diff(frs, axis=0)
             ls = '.'
+            if invert:
+                frs_t = np.cumsum(frs_t, axis=0)
         elif t == 'log':
             frs_t = np.log(frs)
             ls = '*'
+            if invert:
+                frs_t = np.exp(frs_t)
         elif t == 'diff-log':
             frs_t = frs.copy()
             frs_t[:-1] = np.diff(frs, axis=0)
             frs_t = np.log(frs_t)
+            if invert:
+                frs_t = np.exp(frs_t)
+                frs_t = np.cumsum(frs_t, axis=0)
             ls='x'
         elif t == 'log-diff':
             frs_t = frs.copy()
             frs_t = np.log(frs_t)
             frs_t[:-1] = np.diff(frs, axis=0)
             ls = 'd'
+            if invert:
+                frs_t = np.cumsum(frs_t, axis=0)
+                frs_t = np.exp(frs_t)
         else:
             continue
         frs_t[np.isnan(frs_t)] = 0
         frs_t[np.isinf(frs_t)] = 0
-
         fr_pcas, _, _ = pca(10, frs_t)
         js = [fit(fr_pcas[idx_time, :, :], b) for idx_time in tqdm.tqdm(range(len(ts)))]
         plt.figure("js")
         plt.plot(ts, js, label=str(t), marker=ls)
+
+    plt.axhline(.5, c='black',label='Chance Level')
     plt.legend()
+    plt.title("Lick Direction Prediction Accuracy")
+    plt.xlabel("Trial Time")
+    plt.ylabel("Prediction Accuracy")
+    plt.savefig("fit_pc_projs_transformed.png", bbox_inches='tight', dpi=128)
     plt.show()
 
     # for each of (raw, diff, log, diff-log, log-diff)
