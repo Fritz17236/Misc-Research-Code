@@ -9,6 +9,7 @@ import numpy as np
 import math
 
 import scipy.signal
+from matplotlib.backends.backend_pdf import PdfPages
 from sklearn.decomposition import PCA
 
 import constants
@@ -930,9 +931,31 @@ def filter_firing_rates_by_stim_type(frs, session, type='none'):
     :param session:  Session instance
     :return: frs_filt (num_bins, num_trials_filtered, num_neurons) filtered data, trial_mask boolean numpy 1-vector
     """
+    stims = session.get_task_stimulation()
     if type == 'none':
-
-        stims = session.get_task_stimulation()
         mask = stims[:,0] == 0
 
+    elif type == 'pert left':
+        mask = stims[:,1] == 1
+
+    elif type == 'pert right':
+        mask = stims[:, 1] == 2
+
+    else:
+        raise NotImplementedError("type: {0} not implemented".format(type))
+
+
     return frs[:, mask, :], mask
+
+
+def multipage(filename, figs=None, dpi=200):
+    pp = PdfPages(filename)
+    if figs is None:
+        figs = [plt.figure(n) for n in plt.get_fignums()]
+    for fig in figs:
+        fig.savefig(pp, format='pdf')
+    pp.close()
+
+
+def z_score(X, axis):
+    return (X - np.mean(X, axis=axis)) / np.std(X, axis=axis)

@@ -10,7 +10,9 @@ from collections import defaultdict
 import os
 
 import statsmodels
+from matplotlib import pyplot as plt
 from  statsmodels.tsa.stattools import adfuller, kpss
+from statsmodels.nonparametric.kernel_density import KDEMultivariateConditional, KDEMultivariate
 
 from tqdm import tqdm
 
@@ -96,7 +98,7 @@ def load_all_session_data(verbose=False):
     return session_data
 
 
-# region Single-Session Scripts
+# region Single-Session Script
 
 def plot_pc_autocorrelation_analysis(session, pc_ref, pc_name, save_dir):
     """
@@ -518,8 +520,77 @@ def whitened_left_right_alm_crosscorr(session: Session, num_pcs = 5):
         # run cross-correlation of each add to running sums, num trials
 
     # return  sum, num trials
-# endregion
 
+
+def estimate_conditional_density_stationary_pcs(session: Session, num_pcs = 10):
+    """
+    :param session:
+    :param num_pcs:
+    :return:
+    """
+
+    def transform_stationary(frs_x, fill_nan=0):
+        """
+        Apply the stationarity transform: taking the natural logarithm, then differencing
+
+        The input is first passed through the natural logarithm, then differenced along the time-axis (axis=0)
+        :param frs_x: (num_ts, num_trials, num_neurons) numpy vector
+        :param fill_nan: fill invalid values with this number
+        :return: frs_t (num_ts - 1, num_trials, num_neurons) transformed (stationarized) data
+        """
+        frs_t = np.log(frs_x)
+        frs_t[np.isnan(frs_t)] = fill_nan
+        frs_t[np.isinf(frs_t)] = fill_nan
+        return np.diff(frs_t, axis=0)
+
+    # get left alm neurons and right alm neurons to get 2 x (num_ts, num_trials, num_neurons)
+    frs_left, trial_mask = filter_firing_rates_by_stim_type(session.get_firing_rates(region='left ALM'), session)
+    frs_right, _  = filter_firing_rates_by_stim_type(session.get_firing_rates(region='right ALM'), session)
+
+    # stationarize each trial firing rate (log-diff)
+    frs_left_stationary = transform_stationary(frs_left)
+    frs_right_stationary = transform_stationary(frs_right)
+
+    # compute pc datasets for each to get 2 x (num_ts, num_trials, num_pcs) projections
+    fr_pcas_left, components_left, spectrum_left = utils.pca(num_pcs, frs_left_stationary)
+    fr_pcas_right, components_right, spectrum_right = utils.pca(num_pcs, frs_right_stationary)
+
+
+    (num_bins, num_trials) = fr_pcas_left.shape[0:2]
+    frs_pcas_left_concat = np.swapaxes(fr_pcas_left, 0, 2).reshape((num_pcs, num_bins * num_trials))
+    frs_pcas_right_concat = np.swapaxes(fr_pcas_right, 0, 2).reshape((num_pcs, num_bins * num_trials))
+
+    # use statsmodel kde to estimate conditional density of right alm activity given left
+    # dens_c = KDEMultivariateConditional(
+    #     endog=[frs_pcas_right_concat.T[:,0]], exog=[frs_pcas_left_concat.T[:,0]], dep_type='c',
+    #     indep_type='c', bw='normal_reference')
+    data = np.vstack((frs_pcas_right_concat.T[:, 0], frs_pcas_left_concat.T[:, 0])).T
+    dens_c = KDEMultivariate(data, var_type='cc')
+
+    x_min = np.min(frs_pcas_right_concat.T[:,0])
+    x_max = np.max(frs_pcas_right_concat.T[:,0])
+    y_min = np.min(frs_pcas_left_concat.T[:,0])
+    y_max = np.max(frs_pcas_left_concat.T[:,0])
+
+    xs = np.linspace(x_min,x_max, num=100)
+    ys = np.linspace(y_min,y_max, num=100)
+
+    X, Y = np.meshgrid(xs, ys)
+
+    preds = np.zeros(X.shape)
+    for i in range(len(xs)):
+        preds[i,:] =  dens_c.pdf([[xs[i]]*len(xs),ys])
+    preds /= np.sum(preds, axis=(0, 1))
+    plt.pcolor(X, Y, preds, shading='auto')
+    plt.colorbar()
+    plt.show()
+
+    # scatter plot of 1st pc left alm, 1st pc right alm projections
+
+
+    # endregion
+
+# endregion
 
 # region Multi-Session Scripts
 
@@ -894,19 +965,25 @@ def epoch_based_pca(session_data_dict):
 
 
 def least_squares_prediction(session, invert=False):
-    def fit(X, b):
-        from sklearn.model_selection import train_test_split
-        X_train, X_test, b_train, b_test = train_test_split(X, b, test_size = 0.33, random_state = 42)
-        z_star = np.linalg.pinv(X_train) @ b_train
-        b_hat = X_test @ z_star
-        b_hat[b_hat > 0] = 1
-        b_hat[b_hat <= 0] = -1
-        # J = 1 / len(b_hat) * np.sum([(b[i] - b_hat[i])**2 for i in range(len(b))])**.5
-        correct = np.zeros(b_hat.shape)
-        for i, dir in enumerate(b_hat):
-            if b_hat[i] == b_test[i]:
-                correct[i] = 1
+    def fit(X, y):
+        # trials x pcs
+        d = X.shape[1] // 2
+        x_l = X[:, :d]
+        x_r = X[:, :d]
+        # cov = np.cov(x_l.T, x_r.T)
+        # return np.trace(cov)
 
+        from sklearn.model_selection import train_test_split
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.10)
+        z_star = np.linalg.pinv(X_train) @ y_train
+        y_hat = X_test @ z_star
+        y_hat[y_hat > 0] = 1
+        y_hat[y_hat <= 0] = -1
+        # J = 1 / len(b_hat) * np.sum([(b[i] - b_hat[i])**2 for i in range(len(b))])**.5
+        correct = np.zeros(y_hat.shape)
+        for i, dir in enumerate(y_hat):
+            if y_hat[i] == y_test[i]:
+                correct[i] = 1
         return np.mean(correct)
 
     transformations = ['raw', 'diff', 'log', 'diff-log', 'log-diff']
@@ -916,7 +993,7 @@ def least_squares_prediction(session, invert=False):
     b = session.get_task_lick_directions()[trial_mask]
     b = np.asarray([constants.ENUM_LICK_LEFT if d == 'l' else constants.ENUM_LICK_RIGHT for d in b])
 
-
+    accs = {}
     ts = session.get_ts()
     for t in transformations:
         if t == 'raw':
@@ -926,52 +1003,66 @@ def least_squares_prediction(session, invert=False):
             frs_t = frs.copy()
             frs_t[:-1] = np.diff(frs, axis=0)
             ls = '.'
-            if invert:
-                frs_t = np.cumsum(frs_t, axis=0)
         elif t == 'log':
             frs_t = np.log(frs)
             ls = '*'
-            if invert:
-                frs_t = np.exp(frs_t)
         elif t == 'diff-log':
             frs_t = frs.copy()
             frs_t[:-1] = np.diff(frs, axis=0)
             frs_t = np.log(frs_t)
-            if invert:
-                frs_t = np.exp(frs_t)
-                frs_t = np.cumsum(frs_t, axis=0)
             ls='x'
         elif t == 'log-diff':
             frs_t = frs.copy()
             frs_t = np.log(frs_t)
             frs_t[:-1] = np.diff(frs, axis=0)
             ls = 'd'
-            if invert:
-                frs_t = np.cumsum(frs_t, axis=0)
-                frs_t = np.exp(frs_t)
         else:
             continue
         frs_t[np.isnan(frs_t)] = 0
         frs_t[np.isinf(frs_t)] = 0
+
+        # want to study difference between hemispheres
+        # look at covariance between two rnadom vectors
+
         fr_pcas, _, _ = pca(10, frs_t)
-        js = [fit(fr_pcas[idx_time, :, :], b) for idx_time in tqdm.tqdm(range(len(ts)))]
-        plt.figure("js")
-        plt.plot(ts, js, label=str(t), marker=ls)
 
-    plt.axhline(.5, c='black',label='Chance Level')
-    plt.legend()
-    plt.title("Lick Direction Prediction Accuracy")
-    plt.xlabel("Trial Time")
-    plt.ylabel("Prediction Accuracy")
-    plt.savefig("fit_pc_projs_transformed.png", bbox_inches='tight', dpi=128)
-    plt.show()
+        if invert:
+            if t == 'diff':
+                fr_pcas = np.cumsum(fr_pcas, axis=0)
+            elif t == 'log':
+                fr_pcas = np.exp(fr_pcas)
+            elif t == 'diff-log':
+                fr_pcas = np.exp(fr_pcas)
+                fr_pcas = np.cumsum(fr_pcas, axis=0)
+            elif t == 'log-diff':
+                fr_pcas = np.cumsum(fr_pcas, axis=0)
+                fr_pcas = np.exp(fr_pcas)
 
-    # for each of (raw, diff, log, diff-log, log-diff)
+        fr_pcas[np.isnan(fr_pcas)] = 0
+        fr_pcas[np.isinf(fr_pcas)] = 0
+        js = np.asarray([fit(fr_pcas[idx_time, :, :], b) for idx_time in range(len(ts))])
+        accs[t] = js
+
+    return accs, len(b)
+    #     plt.figure("js")
+    #     plt.plot(ts, js, label=str(t), marker=ls)
+    #
+    # plt.axhline(.5, c='black',label='Chance Level')
+    # plt.legend()
+    # plt.title("Lick Direction Prediction Accuracy")
+    # plt.xlabel("Trial Time")
+    # plt.ylabel("Prediction Accuracy")
+    # plt.savefig("fit_pc_projs_transformed.png", bbox_inches='tight', dpi=128)
+    # plt.show()
+
+
+    # for ea   ch of (raw, diff, log, diff-log, log-diff)
         # apply transformation
         # get pcs
         # select a time point
         # compute pc projs
         # compute least squares predicition
+
 
 def cch_analysis_multithreaded(sess_data):
     spike_times = sess_data.get_spike_times().copy()
@@ -1202,6 +1293,296 @@ def cch_analysis_multithreaded(sess_data):
     #
     # plt.show()
 
+
+def least_squares_all_sessions(session_data_dict, invert):
+    for sess in session_data_dict.values():
+        ts = sess.get_ts()
+        break
+    transformations = ['raw', 'diff', 'log', 'diff-log', 'log-diff']
+    js = {tr: np.zeros((len(ts),)) for tr in transformations}
+    tot_trials = 0
+    num_sessions = 0
+    for sess in tqdm.tqdm(session_data_dict.values()):
+        try:
+            # scripts.estimate_conditional_density_stationary_pcs(sess, 10)
+            accs, num_trials = least_squares_prediction(sess, invert)
+            for tr in accs.keys():
+                js[tr] += accs[tr] * num_trials
+            tot_trials += num_trials
+            num_sessions += 1
+        except KeyError:
+            continue
+        # break
+    for t in transformations:
+        plt.figure("js")
+        plt.plot(ts, js[t] / tot_trials, label=str(t))
+    plt.axhline(.5, c='black', label='Chance Level')
+    plt.legend()
+    plt.title("Lick Direction Prediction Accuracy, {0} Sessions, {1} Trials".format(num_sessions, tot_trials))
+    plt.xlabel("Trial Time")
+    plt.ylabel("Prediction Accuracy")
+    plt.savefig("fit_pc_projs_transformed.png", bbox_inches='tight', dpi=128)
+    plt.show()
+
+
+def summary_17_21(sess_left_right_alm):
+    tot_trials = 0
+    num_sessions = len(sess_left_right_alm)
+    num_pcs = 3
+    errs = np.zeros((128, num_pcs, num_sessions))
+    ntp = np.zeros((num_sessions,))
+    avgs = np.zeros((num_sessions,))
+    widths = np.zeros(avgs.shape)
+    lams = np.zeros((num_pcs, num_sessions))
+    vars = np.zeros(lams.shape)
+    rs = np.zeros(vars.shape)
+    rs_p = np.zeros(rs.shape)
+    stationary_invert = True
+    stationary = True
+    normalize = True
+    sess_idx = 0
+    for session in tqdm.tqdm(sess_left_right_alm):
+        try:
+            stims = session.get_task_stimulation()
+            dirs = session.get_task_lick_directions()
+            trial_mask_left_lick_no_stim = [idx for idx in range(session.get_num_trials())
+                          if (stims[idx, 0]==0) and (dirs[idx]=='l')]
+
+            frs_left = session.get_firing_rates(region='left ALM')[:, trial_mask_left_lick_no_stim, :]
+            frs_right = session.get_firing_rates(region='right ALM')[:, trial_mask_left_lick_no_stim, :]
+
+            if stationary:
+                frs_t_left = np.diff(frs_left, axis=0)
+                frs_t_right = np.diff(frs_right, axis=0)
+            else:
+                frs_t_left = frs_left
+                frs_t_right = frs_right
+
+            fr_pcas_left, components_l, spec_l = utils.pca(num_pcs, frs_t_left)
+            fr_pcas_right, components_r, spec_r = utils.pca(num_pcs, frs_t_right)
+
+            spec_tot = np.sqrt(spec_l ** 2 + spec_r ** 2)
+            spec_tot /= spec_tot.sum()
+
+
+            (num_bins, num_trials) = fr_pcas_left.shape[0:2]
+            left_cat = fr_pcas_left.reshape((num_bins * num_trials, num_pcs))
+            right_cat = fr_pcas_right.reshape((num_bins  * num_trials, num_pcs))
+
+            if normalize:
+                left_cat = utils.z_score(left_cat, axis=0)
+                right_cat = utils.z_score(right_cat, axis=0)
+
+            r_reshaped = right_cat.reshape((num_bins, num_trials, num_pcs))
+
+            X = np.linalg.pinv(left_cat) @ right_cat
+            r_hat_cat = left_cat @ X
+            r_hat = r_hat_cat.reshape((num_bins, num_trials, num_pcs))            ###
+
+            if stationary and stationary_invert:
+                r_hat = np.cumsum(r_hat, axis=0)
+                r_reshaped = np.cumsum(r_reshaped, axis=0)
+
+            err_flat = right_cat - r_hat_cat
+            r_squared_flat = 1 - np.sum(err_flat**2, axis=0) / np.sum(right_cat**2, axis=0)
+            err = err_flat.reshape((num_bins, num_trials, num_pcs))
+
+            ts = session.get_ts()[:err.shape[0]]
+
+            for i in range(num_pcs):
+                stdra = r_reshaped.std(axis=1)[:, i]
+                plt.figure("pc {0}".format(i))
+                plt.plot(ts, err.mean(axis=1)[:, i] /stdra, label=r'$\mu(r - \hat{r}) / \sigma(r)$  $r^2 = %f $' % r_squared_flat[i], c='r', marker='.')
+                # plt.plot(ts, 1 - np.sum(err**2,axis=1)[:, i] / np.sum(r_reshaped**2, axis=1)[:,i], label=r'Cross-Trial $r^2$ Value', c='grey', alpha=.5, marker='.')
+                plt.plot(ts, r_hat.mean(axis=1)[:, i] / stdra, label=r'$\mu(\hat{r}) / \sigma (r)$', c='g', marker='.')
+                plt.plot(ts, r_reshaped.mean(axis=1)[:, i] / stdra, label=r'$\mu(r) / \sigma (r)$', c='b', marker='.')
+
+                # for j in range(num_trials):
+                #     plt.scatter(ts, err[:, j, i] / stdra, label=r'$\mu(r - \hat{r}) / \sigma(r)$', c='r', s=10)
+                #     plt.scatter(ts, r_hat[:,j, i] / stdra, label=r'$\mu(\hat{r}) / \sigma (r)$', c='g', s=10)
+                #     plt.scatter(ts, r_reshaped[:,j, i] / stdra, label=r'$\mu(r) / \sigma (r)$', c='b', s=10)
+
+
+                plt.xlabel("Time (s)")
+                plt.title("Left ALM Estimate of Right PC {0}".format(i))
+                plt.ylabel(" Firing Rate (Normalized)")
+                plt.legend()
+                plt.ylim([-1, 1])
+                plt.savefig('pc_{0}.png'.format(i), bbox_inches='tight', dpi=128)
+
+            tot_trials += num_trials
+            frs_left_p = session.get_firing_rates(region='left ALM')
+            trial_mask_left_lick_left_stim = [idx for idx in range(session.get_num_trials())
+                                              if (stims[idx, 1]==1)
+                                              and
+                                              (dirs[idx]=='l')
+                                                          ]
+            frs_left_p = session.get_firing_rates(region='left ALM')[:, trial_mask_left_lick_left_stim, :]
+            frs_right_p = session.get_firing_rates(region='right ALM')[:, trial_mask_left_lick_left_stim, :]
+
+            if stationary:
+                frs_left_pt = np.diff(frs_left_p, axis=0)
+                frs_right_pt = np.diff(frs_right_p, axis=0)
+            else:
+                frs_left_pt = frs_left_p
+                frs_right_pt = frs_right_p
+
+            pc_left_pt = np.squeeze(np.tensordot(frs_left_pt, components_l, axes=1))
+            pc_right_pt = np.squeeze(np.tensordot(frs_right_pt, components_r, axes=1))
+            num_bins, num_trials_pert = pc_left_pt.shape[0:2]
+            pc_left_pt_cat = pc_left_pt.reshape((num_bins * num_trials_pert, num_pcs))
+            pc_right_pt_cat = pc_right_pt.reshape((num_bins * num_trials_pert, num_pcs))
+
+            if normalize:
+                pc_left_pt_cat = utils.z_score(pc_left_pt_cat, axis=0)
+                pc_right_pt_cat = utils.z_score(pc_right_pt_cat, axis=0)
+
+            r_hat_cat_pt = pc_left_pt_cat @ X
+            r_hat_pt = r_hat_cat_pt.reshape((num_bins, num_trials_pert, num_pcs))
+            r_reshaped_pt = pc_right_pt_cat.reshape(((num_bins, num_trials_pert, num_pcs)))
+
+            if stationary and stationary_invert:
+                r_hat_p = np.cumsum(r_hat_pt, axis=0)
+                r_reshaped_p = np.cumsum(r_reshaped_pt, axis=0)
+            else:
+                r_hat_p = r_hat_pt
+                r_reshaped_p = r_reshaped_pt
+
+            err_flat_p = pc_right_pt_cat - r_hat_cat_pt
+            r_squared_flat_p = 1 - np.sum(err_flat_p ** 2, axis=0) / np.sum(pc_right_pt_cat ** 2, axis=0)
+
+
+            err_p = r_reshaped_p - r_hat_p
+            aerr_p = np.abs(err_p)
+
+            for i in range(num_pcs):
+                stdra_p = r_reshaped_p.std(axis=1)[:,i]
+                plt.figure("ppc {0}".format(i))
+                plt.plot(ts, err_p.mean(axis=1)[:,i] / stdra_p,label=r'$\mu(r - \hat{r}) / \sigma(r)$ $r^2 = %f $' % r_squared_flat_p[i], c='r', marker='.')
+                plt.plot(ts, r_hat_p.mean(axis=1)[:,i] / stdra_p, label=r'$\mu(\hat{r}) / \sigma(r)$',c='g', marker='.')
+                plt.plot(ts, r_reshaped_p.mean(axis=1)[:, i] / stdra_p , label=r'$\mu(r) / \sigma(r)$', c='b', marker='.')
+                plt.xlabel("Time (s)")
+                plt.title("Perturbed Left ALM Estimate of Right PC {0}".format(i))
+                plt.ylabel("Firing Rate (Normalized)")
+                plt.legend()
+                avg = np.asarray(
+                    [stims[i, 2] - session.get_task_cue_times()[0, i] for i in trial_mask_left_lick_left_stim]).mean()
+                plt.axvline(avg)
+                plt.ylim([-1, 1])
+                plt.savefig('ppc_{0}.png'.format(i), bbox_inches='tight', dpi=128)
+
+                # plt.figure("ppc {0}".format(i))
+                # pc_std_r = r_reshaped.std(axis=1)
+                # plt.plot(ts, np.abs(err_p).mean(axis=1)[:, i]/pc_std_r[:,i], label='perturbed error', c='g')
+                # plt.plot(ts, err.mean(axis=1)[:, i]/pc_std_r[:,i], label='unperturbed error', c='b')
+                # plt.xlabel("Time (s)")
+                # plt.title("Perturbed Left->Right Estimate of PC {0}".format(i))
+                # plt.ylabel("Estimation Error (Hz)")
+                # avg = np.asarray(
+                #     [stims[i, 2] - session.get_task_cue_times()[0, i] for i in trial_mask_left_lick_left_stim]).mean()
+                # plt.axvline(avg)
+                # plt.legend()
+                # plt.ylim([-2, 2])
+                # plt.savefig('ppc_{0}.png'.format(i), bbox_inches='tight', dpi=128)
+
+
+
+                plt.figure("ppce {0}".format(i))
+                # plt.scatter(ts, ((err_p.mean(axis=1) - err.mean(axis=1))[:, i]) / stdra_p, c='r', s=7)
+                plt.plot(ts, ((err_p.mean(axis=1) - err.mean(axis=1))[:, i]) / stdra_p, c='r', label=
+                         r'$\frac{\mu(r_{pert} - \hat{r}_{pert} ) - \mu(r - \hat{r})} {\sigma(r)}$', marker='.')
+                plt.xlabel("Time (s)")
+                plt.title("Difference Between Non-Perturbed and Perturbed, PC {0}".format(i))
+                plt.ylabel(" Firing Rate (Normalized)")
+                avg = np.asarray(
+                    [stims[i, 2] - session.get_task_cue_times()[0, i] for i in trial_mask_left_lick_left_stim]).mean()
+                width = np.asarray(
+                    [stims[i, 3] - stims[i, 2] for i in trial_mask_left_lick_left_stim]).mean()
+                # plt.axvline(avg, c='k')
+                plt.fill_betweenx([-1,1], avg, avg+width, color='k', alpha=.5)
+                plt.ylim([-1,1])
+                plt.legend()
+                plt.savefig('ppce_{0}.png'.format(i), bbox_inches='tight', dpi=128)
+
+
+            ntp[sess_idx] = num_trials_pert
+            avgs[sess_idx] = np.asarray(
+                 [stims[i, 2] - session.get_task_cue_times()[0, i] for i in trial_mask_left_lick_left_stim]).mean()
+
+            widths[sess_idx] = np.asarray(
+                 [stims[i, 3] - stims[i, 2] for i in trial_mask_left_lick_left_stim]).mean()
+
+            for i in range(num_pcs):
+                stdra_p = r_reshaped_p.std(axis=1)[:, i]
+                errs[:, i, sess_idx] = (err_p.mean(axis=1) - err.mean(axis=1))[:, i] / stdra_p
+
+
+            rs_p[:, sess_idx] = r_squared_flat_p
+            rs[:, sess_idx] = r_squared_flat
+
+            def func(x, amp, lam, offset):
+                return amp * np.exp(-lam * x) + offset
+            from scipy.optimize import curve_fit
+
+            # for j in range(num_pcs):
+            #     idx_t_pert = np.argwhere(ts > avgs[sess_idx])[0][0]#+ int(.5 * widths[sess_idx] / (ts[1]-ts[0]))
+            #     ej0 = np.abs(errs[idx_t_pert-1, j, sess_idx])
+            #     ej = np.abs(errs[idx_t_pert:, j, sess_idx])
+            #     # b = np.expand_dims(np.log(ej) - np.log(ej0), axis=1)
+            #     # a = ts[idx_t_pert:]
+            #     # a -= a[0]
+            #     # try:
+            #     #     popt, pcov = curve_fit(func, a, ej, p0 = (1e-6, 1e-6, 1))
+            #     # except RuntimeError:
+            #     #     lams[j, sess_idx] = -1
+            #     #     continue
+            #     idx_return = np.argwhere(ej <= ej0)[0]
+            #     lam = (ts[1]-ts[0]) * idx_return
+            #     vars[j, sess_idx] = spec_tot[j] #np.sqrt(spec_r[j]**2 + spec_l[j]**2)
+            #     lams[j, sess_idx] = lam
+            sess_idx += 1
+            # break
+        #
+        except KeyError:
+            continue
+
+    errs[np.isnan(errs)] = 0
+    errs[np.isinf(errs)] = 0
+    ts = session.get_ts()[:len(err)]
+
+    width = 1 # second
+    idx_width = int(width / (ts[1]-ts[0]))
+    num_valid_sessions = len([1 for avg in avgs if not np.isnan(avg)])
+    errs_rolled = np.zeros((2*idx_width ,num_pcs,  num_valid_sessions))
+    idx_sess = 0
+    for i in range(num_sessions):
+        if np.isnan(avgs[i]):
+            continue
+
+        idx_pert = np.argwhere(ts > avgs[i])[0]
+        try:
+            idx_pert = idx_pert[0] + 1
+        except TypeError:
+            continue
+        errs_rolled[:, :, idx_sess] = errs[idx_pert - idx_width: idx_pert + idx_width, :, i]
+        idx_sess += 1
+    ts_rolled = (ts[1]-ts[0]) * np.arange(start=-idx_width, stop=idx_width)
+    # plot ts subset vs errs rolls, make sure perturbations are timed right
+    # plt.plot(ts[idx_pert - idx_width: idx_pert + idx_width], errs_rolled[:,:, i])
+    # plt.axvline(ts[idx_pert])
+    # plt.axvline(avgs[i])
+
+
+
+    for i in range(3):
+        plt.figure("ppce {0}".format(i))
+        mu = np.abs(errs[:,i] * ntp).sum(axis=1) / ntp.sum()
+        sig = np.abs(errs[:,i] * ntp).std(axis=1) / ntp.sum()
+        plt.plot(ts, mu, label=str(i))
+        plt.ylim([0, 1])
+        plt.fill_between(ts, mu-sig, mu + sig)
+
+    print('done')
 # endregion
 
 
@@ -1245,3 +1626,13 @@ def bar(spike_times, neuron_pairs, idx_pair, rng, bin_width, window_width, p_cri
 
 
 # endregion
+def avg_pert(session):
+    stims = session.get_task_stimulation()
+    dirs = session.get_task_lick_directions()
+    trial_mask_left_lick_left_stim = [idx for idx in range(session.get_num_trials())
+                                      if (stims[idx, 1] == 1)
+                                      and
+                                      (dirs[idx] == 'l')]
+    avg = np.asarray(
+        [stims[i, 2] - session.get_task_cue_times()[0, i] for i in trial_mask_left_lick_left_stim]).mean()
+    return avg

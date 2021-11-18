@@ -8,7 +8,7 @@ DIR_SAVE = r"C:\Users\fritz\Desktop\session_data"     # directory to store persi
 
 # Spike Rate Estimation
 TIME_BEGIN_DEFAULT = -3.0  # trial start time
-TIME_END_DEFAULT = 3.5  # trial end time
+TIME_END_DEFAULT = 6  # trial end time
 BIN_WIDTH_DEFAULT = .05 # trial time is split into non-overlapping bins with this width
 THRESHOLD_FIRING_RATE_MIN = 1  # Lowest firing rate in Hz when filtering by firing rate
 SPIKE_TRAIN_DILUTION_BOUND = .006 # spike train dilution lower bound
