@@ -152,7 +152,7 @@ if __name__ == '__main__':
     # region config sim and load sim-wide params
     stationary_invert = True
     stationary = True
-    normalize = True
+    normalize = False
     num_pcs = 3
     stims = session.get_task_stimulation()
     dirs = session.get_task_lick_directions()
@@ -167,6 +167,9 @@ if __name__ == '__main__':
     # region non-perturbation trials, error estimation
     trial_mask_left_lick_no_stim = [idx for idx in range(session.get_num_trials())
                                     if (stims[idx, 0] == 0) and (dirs[idx] == 'l')]
+
+    # trial_mask_left_lick_no_stim += [idx for idx in range(session.get_num_trials())
+    #                                 if (stims[idx, 0] == 0) and (dirs[idx] == 'r')]
 
 
     frs_left = session.get_firing_rates(region='left ALM')[:, trial_mask_left_lick_no_stim, :]
@@ -225,6 +228,9 @@ if __name__ == '__main__':
     # region perturbation trials, error estimation
     trial_mask_left_lick_left_stim = [idx for idx in range(session.get_num_trials())
                                     if (stims[idx, 1] == 1) and (dirs[idx] == 'l')]
+    # trial_mask_left_lick_left_stim += [idx for idx in range(session.get_num_trials())
+    #                                 if (stims[idx, 1] == 1) and (dirs[idx] == 'r')]
+
     stims_filt = stims[trial_mask_left_lick_left_stim, :]
     cue_times_filt = cue_times[:, trial_mask_left_lick_left_stim]
     t_perts = stims_filt[:, 2] - cue_times_filt[0,:]
@@ -305,25 +311,33 @@ if __name__ == '__main__':
     if stationary and stationary_invert:
         projs_all = np.cumsum(projs_all, axis=0)
 
-    # get integrals for times after
-    outcomes = session.get_behavior_report()[trial_mask_left_lick_no_stim]
-    # outcomes[outcomes < 0] = 0
-    t_samps = session.get_task_sample_times()[0,trials_mask_all_left]
-    t_cues = session.get_task_cue_times()[0,trials_mask_all_left]
-    t_mask = (ts >= t_samps.mean()) & (ts < t_cues.mean())
-    t_mask = np.argwhere(ts >= 0 and )[0][0]
-    proj_cues = np.squeeze(projs_all[t_mask, :, :])
-    proj_cues = projs_all.mean(axis=0)
-    proj_cues /= np.max(proj_cues,axis=0)
-    print('done')
+    projs_all -= np.mean(projs_all,axis=0)
 
+    # get integrals for times after
+    outcomes = session.get_behavior_report()[trials_mask_all_left]
     right_mask = outcomes == 1
     wrong_mask = outcomes == 0
     no_mask = outcomes == -1
+
+    # outcomes[outcomes < 0] = 0
+    t_samps = session.get_task_sample_times()[0,trials_mask_all_left]
+    t_cues = session.get_task_cue_times()[0,trials_mask_all_left]
+
+    idx_start = np.argwhere(ts>=(t_samps.mean()-cue_times[0,:].mean()))[0][0]
+    idx_end = np.argwhere(ts >= 0)[0][0]
+
+    projs_all -= np.mean(projs_all,axis=0)
+
+    proj_cues = np.linalg.norm(projs_all[:idx_end,:], axis=0)
+
+    proj_cues /= np.max(proj_cues,axis=0)
+    print('done')
+
+
     for i in range(num_pcs):
         if i >= 3:
             break
-        plt.figure('pc '+ str(i) + ' error')
+        plt.figure('pc '+ str(i) + ' error2')
         plt.clf()
         plt.boxplot([proj_cues[right_mask, i], proj_cues[wrong_mask, i], proj_cues[no_mask, i]], sym='',meanline = True, showmeans = True)
         plt.scatter([1] * sum(right_mask), proj_cues[right_mask, i], c='k', marker='.', s=10)
@@ -354,10 +368,53 @@ if __name__ == '__main__':
     # region scratch
     idx_start = np.argwhere(ts>=(t_samps.mean()-cue_times[0,:].mean()))[0][0]
     idx_end = np.argwhere(ts >= 0)[0][0]
-    proj_cues = np.linalg.norm(projs_r2[idx_end:,:], axis=0)
+    proj_cues = np.linalg.norm(projs_all[idx_end:,:], axis=0)
 
-    projs_r2 = A @ components[:, 0]
-    projs_r2 = np.reshape(projs_r2, (num_bins, num_trials))
+    projs_all = (A_all @ components[:, 0]).reshape((num_bins, num_trials_left, 1))
+
+    us,vs =  nonnegative_pca(A)
+    vm = vs[-1]
+
+    projs = (A @ components[:,0]).reshape(num_bins,num_trials)
+    projs_nn = (A @ vm).reshape((num_bins, num_trials, 1))
+
+    if stationary and stationary_invert:
+        projs = np.cumsum(projs,axis=0)
+        projs_nn = np.cumsum(projs_nn,axis=0)
+
+    proj_cues =    np.expand_dims(np.linalg.norm(projs, axis=0),axis=1)
+    proj_cues_nn = np.linalg.norm(projs_nn, axis=0)
+
+    outcomes = session.get_behavior_report()[trial_mask_left_lick_no_stim]
+    right_mask = outcomes == 1
+    wrong_mask = outcomes == 0
+    no_mask = outcomes == -1
+
+    i=0
+    plt.figure('pc ' + str(i) + ' error')
+    plt.clf()
+    plt.boxplot([proj_cues[right_mask, i], proj_cues[wrong_mask, i], proj_cues[no_mask, i]], sym='', meanline=True,
+                showmeans=True)
+    plt.scatter([1] * sum(right_mask), proj_cues[right_mask, i], c='k', marker='.', s=10)
+    plt.scatter([2] * sum(wrong_mask), proj_cues[wrong_mask, i], c='k', marker='.', s=10)
+    plt.scatter([3] * sum(no_mask), proj_cues[no_mask, i], c='k', marker='.', s=10)
+    plt.axhline(0)
+    plt.title("Norm of PC Trajectory After Cue Time, PC " + str(i))
+    plt.ylabel("Projection Strength (Normalized)")
+    plt.xticks([1, 2, 3], labels=['Correct Lick', 'Incorrect Lick', 'No Response'])
+
+    i = 0
+    plt.figure('pc ' + str(i) + ' error nn')
+    plt.clf()
+    plt.boxplot([proj_cues_nn[right_mask, i], proj_cues_nn[wrong_mask, i], proj_cues_nn[no_mask, i]], sym='', meanline=True,
+                showmeans=True)
+    plt.scatter([1] * sum(right_mask), proj_cues_nn[right_mask, i], c='k', marker='.', s=10)
+    plt.scatter([2] * sum(wrong_mask), proj_cues_nn[wrong_mask, i], c='k', marker='.', s=10)
+    plt.scatter([3] * sum(no_mask), proj_cues_nn[no_mask, i], c='k', marker='.', s=10)
+    plt.axhline(0)
+    plt.title("Norm of PC Trajectory After Cue Time, PC " + str(i))
+    plt.ylabel("Projection Strength (Normalized)")
+    plt.xticks([1, 2, 3], labels=['Correct Lick', 'Incorrect Lick', 'No Response'])
     # endregion
 
 # region old code
