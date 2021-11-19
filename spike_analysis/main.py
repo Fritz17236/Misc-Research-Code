@@ -7,8 +7,139 @@ import numpy as np
 import scripts
 import utils
 from sklearn.decomposition import PCA
+import tqdm
 
 from scripts import avg_pert
+
+
+def plot_pc_projection(ts, projs, idx_pc, trials=True, mean=True, std_err=True, remove_outliers=True, append_title=''):
+    """
+    Plot Principal Component Projections.
+    :param ts:
+    :param projs:
+    :param idx_pc:
+    :param trials:
+    :param mean:
+    :param std_err:
+    :param remove_outliers:
+    :return:
+    """
+    num_bins, num_trials, num_pcs = projs.shape
+    print(num_bins, num_trials, num_pcs)
+    mu = projs.mean(axis=1)[:, idx_pc]
+    sigma = projs.std(axis=1)[:, idx_pc] / np.sqrt(num_trials)
+
+    plt.figure('pc ' + str(idx_pc) + append_title)
+    plt.clf()
+    if trials:
+        for j in range(num_trials):
+            plt.scatter(ts, projs[:, j, idx_pc], c='r', marker='.', alpha=.25, s=10)
+    if mean:
+        plt.plot(ts, projs.mean(axis=1)[:, idx_pc], c='b', linewidth=2)
+
+    if std_err:
+        plt.fill_between(ts, mu - sigma, mu + sigma, color='b', alpha=.3)
+
+    plt.xlabel('Time (s)')
+    plt.ylabel("PC Projection (Hz)")
+    plt.show()
+
+def plot_pc_weights(components, idx_pc, left_right_split=None):
+    try:
+        num_neurons, num_pcs = components.shape
+    except ValueError:
+        num_neurons = len(components)
+        num_pcs = 1
+        idx_pc = 0
+        components = np.expand_dims(components, axis=1)
+
+    plt.figure("pc weights {0}".format(idx_pc))
+    plt.clf()
+
+    plt.plot(np.arange(num_neurons), components[:,idx_pc], c='k')
+    plt.scatter(np.arange(num_neurons), components[:, idx_pc], c='r',marker='.')
+    plt.xlabel("Neuron Number")
+    plt.ylabel("Projection Weight (Unitless)")
+    plt.title("PC {0} Projection Weights".format(idx_pc))
+
+    if left_right_split:
+        plt.axvline(left_right_split, c='b')
+
+    plt.show()
+
+def filter_nan(x, fill=0):
+    """
+    Filter nan values to have fill instead
+    :param x:
+    :param fill:
+    :return:
+    """
+    y = x.copy()
+    y[np.isnan(y)] = fill
+    return y
+
+def nonnegative_pca(X, num_steps=1000):
+    """
+    Nonnegative PCA via http://web.stanford.edu/~montanar/RESEARCH/FILEPAP/nmf.pdf
+
+    :param X: data matrix shape n x p
+    :param num_steps: number of algorithm iterations
+    :return: right,left pc vectors v, u respectively such that all are nonnegative
+    """
+    def l0_norm(x):
+        return np.count_nonzero(x)
+
+    def l2_norm(x):
+        return np.sqrt(x.T @ x)
+
+    def f(x):
+        xp = pos(x)
+        return filter_nan(np.sqrt(n) * xp / l2_norm(xp))
+
+
+    def g(x):
+        if np.isclose(l2_norm(x), 0):
+            return 0 * x
+        else:
+            return filter_nan(np.sqrt(n) * x / l2_norm(x))
+
+    def pos(x):
+        y = x.copy()
+        y[y < 0] = 0
+        return y
+
+    n,p = X.shape
+    t = 0 # step
+
+    u_tm1 = np.zeros((n,))
+    u_t = np.zeros((n,))
+    v_t = np.random.normal(size=(p,))
+    v_t /= np.linalg.norm(v_t)
+    v_tp1 = np.zeros((p,))
+
+    us = [u_t]
+    vs = [v_t]
+
+    uhats = []
+    vhats = [pos(v_t) / l2_norm(pos(v_t))]
+
+    for t in tqdm.tqdm(range(num_steps)):
+        b_t = l0_norm(pos(v_t)) / (np.sqrt(n) * l2_norm(pos(v_t)))
+        u_t = X @ f(v_t) - b_t * g(u_tm1)
+        d_t = np.sqrt(n) / l2_norm(u_t)
+
+        v_tp1 = X.T @ g(u_t) - d_t * f(v_t)
+
+        us.append(u_t)
+        vs.append(v_t)
+        uhats.append(u_t / l2_norm(u_t))
+        vhats.append(pos(v_t) / l2_norm(pos(v_t)))
+
+        u_tm1 = u_t.copy()
+        v_t = v_tp1
+
+    return uhats, vhats
+
 
 if __name__ == '__main__':
     # region load data and session select
@@ -26,6 +157,7 @@ if __name__ == '__main__':
     stims = session.get_task_stimulation()
     dirs = session.get_task_lick_directions()
     cue_times = session.get_task_cue_times()
+    sample_times = session.get_task_sample_times()
     ts = session.get_ts()
     if stationary:
         ts = ts[1:]
@@ -35,6 +167,7 @@ if __name__ == '__main__':
     # region non-perturbation trials, error estimation
     trial_mask_left_lick_no_stim = [idx for idx in range(session.get_num_trials())
                                     if (stims[idx, 0] == 0) and (dirs[idx] == 'l')]
+
 
     frs_left = session.get_firing_rates(region='left ALM')[:, trial_mask_left_lick_no_stim, :]
     frs_right = session.get_firing_rates(region='right ALM')[:, trial_mask_left_lick_no_stim, :]
@@ -51,7 +184,12 @@ if __name__ == '__main__':
     frs_right_flat -= np.expand_dims(frs_right_flat.mean(axis=1),axis=1)
 
     A = np.hstack((frs_left_flat, -frs_right_flat))
-    pca = PCA(n_components=num_pcs, svd_solver="full")
+
+    if normalize:
+        A = utils.z_score(A, axis=0)
+
+
+    pca = PCA(svd_solver="full")
     pca.fit(A)
     err_pc = np.zeros((num_bins * num_trials, num_pcs))
     components = np.zeros((A.shape[1], num_pcs))
@@ -67,17 +205,21 @@ if __name__ == '__main__':
         err_pc_r = np.cumsum(err_pc_r, axis=0)
 
     err_pc_r -= err_pc_r.mean(axis=0)
+
+
+    idx_pc = 0
+
     std = err_pc_r.std(axis=1)
-    for i in range(num_pcs):
-        plt.figure('pc {0}'.format(i))
-        plt.plot(ts, err_pc_r.mean(axis=1)[:,i]/std[:,i])
-        for j in range(num_trials):
-            plt.scatter(ts, err_pc_r[:, j, i]/std[:,i], c='r', alpha=.5, s=3)
-            plt.axvline()
-        plt.xlabel("Trial Time (s)")
-        plt.ylabel("PC Projection (Normalized)")
-        plt.title('Error Trajectories, {0} Trials'.format(num_trials))
-        plt.savefig('pc {0}'.format(i), bbox_inches='tight', dpi=128)
+    # for i in range(num_pcs):
+    #     plt.figure('pc {0}'.format(i))
+    #     plt.clf()
+    #     plt.plot(ts, np.abs(err_pc_r).mean(axis=1)[:,i]/std[:,i], linewidth=2)
+    #     for j in range(num_trials):
+    #         plt.scatter(ts, np.abs(err_pc_r)[:, j, i]/std[:,i], c='r', alpha=.3, s=3)
+    #     plt.xlabel("Trial Time (s)")
+    #     plt.ylabel("PC Projection (Normalized)")
+    #     plt.title('Error Trajectories, {0} Trials'.format(num_trials))
+    #     plt.savefig('pc {0}'.format(i), bbox_inches='tight', dpi=128)
     # endregion
 
     # region perturbation trials, error estimation
@@ -104,6 +246,8 @@ if __name__ == '__main__':
 
     A_p = np.hstack((frs_left_flat_p, -frs_right_flat_p))
 
+    if normalize:
+        A_p = utils.z_score(A_p, axis=0)
     err_pc_p = np.zeros((num_bins * num_trials_pert, num_pcs))
     for j in range(num_pcs):
         err_pc_p[:, j] = np.tensordot(A_p, components[:,j], axes=1)
@@ -113,22 +257,108 @@ if __name__ == '__main__':
 
     err_pc_r_p -= np.expand_dims(err_pc_r.mean(axis=1),axis=1)
     err_pc_r_p -= err_pc_r_p.mean(axis=0)
-    std_p = err_pc_r_p.std(axis=1)
-    for i in range(num_pcs):
-        plt.figure('pcp {0}'.format(i))
-        plt.plot(ts, err_pc_r_p.mean(axis=1)[:,i]/std_p[:,i])
-        for j in range(num_trials_pert):
-            plt.scatter(ts, err_pc_r_p[:, j, i]/std_p[:,i], c='r', alpha=.5, s=3)
-            plt.axvline(t_perts[j],c='k')
-        plt.xlabel("Trial Time (s)")
-        plt.ylabel("PC Projection (Normalized)")
-        plt.title('Perturbed Error Trajectories, {0} Trials'.format(num_trials_pert))
 
-        plt.savefig('pcp {0}'.format(i), bbox_inches='tight', dpi=128)
+    std_p = err_pc_r_p.std(axis=1)
+
+    err_pruned = err_pc_r_p.copy()
+    ep_mean = err_pruned.mean(axis=1)
+    ep_std = err_pruned.std(axis=1)
+    for i in range(num_pcs):
+        for j in range(num_trials_pert):
+            corr_mask = err_pruned[:, j, i] > 3 * ep_std[:,i]
+            err_pruned[:, j, i][corr_mask] = ep_mean[:,i][corr_mask]
+
+
+    # for i in range(num_pcs):
+    #     plt.figure('pcp {0}'.format(i))
+    #     plt.clf()
+    #     plt.plot(ts, (err_pc_r_p).mean(axis=1)[:,i]/std_p[:,i], linewidth=2)
+    #     for j in range(num_trials_pert):
+    #         plt.scatter(ts, (err_pc_r_p[:, j, i])/std_p[:,i], c='r', alpha=.3, s=3)
+    #         plt.axvline(t_perts[j],c='k')
+    #         plt.axvline(t_perts[j]+.5, c='k')
+    #     plt.xlabel("Trial Time (s)")
+    #     plt.ylabel("PC {0} Error Projection (Normalized)".format(i))
+    #     plt.title('PC {1} Perturbed Error Trajectories, {0} Trials'.format(num_trials_pert, i))
+    #     plt.savefig('pcp {0}'.format(i), bbox_inches='tight', dpi=128)
+    #
+    #     plt.figure('pcp_abs {0}'.format(i))
+    #     plt.clf()
+    #     plt.plot(ts, np.abs(err_pc_r_p).mean(axis=1)[:,i]/std_p[:,i], linewidth=2)
+    #     for j in range(num_trials_pert):
+    #         plt.scatter(ts, np.abs(err_pc_r_p[:, j, i])/std_p[:,i], c='r', alpha=.3, s=3)
+    #         plt.axvline(t_perts[j],c='k')
+    #         plt.axvline(t_perts[j]+.5, c='k')
+    #     plt.xlabel("Trial Time (s)")
+    #     plt.ylabel("|PC {0} Error Projection| (Normalized)".format(i))
+    #     plt.title('PC {1} |Perturbed Error| Trajectories, {0} Trials'.format(num_trials_pert, i))
+    #     plt.savefig('pcp_abs {0}'.format(i), bbox_inches='tight', dpi=128)
     # endregion
 
+    # region behavioral relevance
+    trials_mask_all_left = trial_mask_left_lick_no_stim + trial_mask_left_lick_left_stim
+    num_trials_left = len(trial_mask_left_lick_no_stim) + len(trial_mask_left_lick_left_stim)
+    A_all = np.vstack((A, A_p))
+    projs_all = A_all @ components
+    projs_all = projs_all.reshape((num_bins, num_trials_left, num_pcs))
+
+    if stationary and stationary_invert:
+        projs_all = np.cumsum(projs_all, axis=0)
+
+    # get integrals for times after
+    outcomes = session.get_behavior_report()[trial_mask_left_lick_no_stim]
+    # outcomes[outcomes < 0] = 0
+    t_samps = session.get_task_sample_times()[0,trials_mask_all_left]
+    t_cues = session.get_task_cue_times()[0,trials_mask_all_left]
+    t_mask = (ts >= t_samps.mean()) & (ts < t_cues.mean())
+    t_mask = np.argwhere(ts >= 0 and )[0][0]
+    proj_cues = np.squeeze(projs_all[t_mask, :, :])
+    proj_cues = projs_all.mean(axis=0)
+    proj_cues /= np.max(proj_cues,axis=0)
     print('done')
 
+    right_mask = outcomes == 1
+    wrong_mask = outcomes == 0
+    no_mask = outcomes == -1
+    for i in range(num_pcs):
+        if i >= 3:
+            break
+        plt.figure('pc '+ str(i) + ' error')
+        plt.clf()
+        plt.boxplot([proj_cues[right_mask, i], proj_cues[wrong_mask, i], proj_cues[no_mask, i]], sym='',meanline = True, showmeans = True)
+        plt.scatter([1] * sum(right_mask), proj_cues[right_mask, i], c='k', marker='.', s=10)
+        plt.scatter([2] * sum(wrong_mask), proj_cues[wrong_mask, i], c='k', marker='.', s=10)
+        plt.scatter([3] * sum(no_mask), proj_cues[no_mask, i], c='k', marker='.', s=10)
+        plt.axhline(0)
+        plt.title("Norm of PC Trajectory After Cue Time, PC " + str(i))
+        plt.ylabel("Projection Strength (Normalized)")
+        plt.xticks([1, 2, 3], labels=['Correct Lick', 'Incorrect Lick', 'No Response'])
+        plt.savefig('correctness_pc_{0}.png'.format(i), bbox_inches='tight', dpi=128)
+
+    plt.figure('pc sum')
+    plt.clf()
+    data = np.mean(proj_cues,axis=1)
+    plt.boxplot([data[right_mask], data[wrong_mask], data[no_mask]], sym='',meanline = True, showmeans = True)
+    plt.scatter([1] * sum(right_mask), (proj_cues).mean(axis=1)[right_mask], c='k', marker='.', s=10)
+    plt.scatter([2] * sum(wrong_mask), (proj_cues).mean(axis=1)[wrong_mask], c='k', marker='.', s=10)
+    plt.scatter([3] * sum(no_mask), (proj_cues).mean(axis=1)[no_mask], c='k', marker='.', s=10)
+    plt.axhline(0)
+    plt.title("Projection Strength at Cue Time, Mean of PC Projections")
+    plt.ylabel("Projection Strength (Normalized)")
+    plt.xticks([1, 2, 3], labels=['Correct Lick', 'Incorrect Lick', 'No Response'])
+    plt.savefig('correctness_all_pcs.png',bbox_inches='tight', dpi=128)
+    plt.show()
+
+    # endregion
+
+    # region scratch
+    idx_start = np.argwhere(ts>=(t_samps.mean()-cue_times[0,:].mean()))[0][0]
+    idx_end = np.argwhere(ts >= 0)[0][0]
+    proj_cues = np.linalg.norm(projs_r2[idx_end:,:], axis=0)
+
+    projs_r2 = A @ components[:, 0]
+    projs_r2 = np.reshape(projs_r2, (num_bins, num_trials))
+    # endregion
 
 # region old code
 

@@ -281,7 +281,9 @@ class Session(PersistentObject):
             if "task_sample_time" not in data_handle.keys():
                 data_handle.create_dataset(name="task_sample_time", data=data['task_sample_time'])
 
-            # TODO: add task stimulation, task cue time, task delay time, filter by epoch
+            if "behavior_report" not in data_handle.keys():
+                data_handle.create_dataset(name='behavior_report', data=data['behavior_report'])
+
         self._add_to_file_record(file_name)
 
     # Accessor methods (necessary to use wrapper?)
@@ -424,6 +426,18 @@ class Session(PersistentObject):
             else:
                 raise KeyError("Region {0} not contained"
                                " within this session: {1}".format(region, self.get_session_brain_regions()))
+
+
+    @access_hd5
+    def get_behavior_report(self):
+        """
+        1: correct or free water, 0: error, -1: no response
+        :return:
+        """
+        with h5py.File(self._data_path, "r") as data_handle:
+            data = np.array(data_handle["behavior_report"]).copy().astype(object)
+        return data
+
 
     def compute_pca_by_brain_region(self, num_pcs=2, overwrite=False, mode='fr', dt=constants.BIN_WIDTH_DEFAULT,
                                     t_start=constants.TIME_BEGIN_DEFAULT, t_stop=constants.TIME_END_DEFAULT):
