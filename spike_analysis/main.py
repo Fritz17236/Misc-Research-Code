@@ -231,6 +231,7 @@ if __name__ == '__main__':
     # trial_mask_left_lick_left_stim += [idx for idx in range(session.get_num_trials())
     #                                 if (stims[idx, 1] == 1) and (dirs[idx] == 'r')]
 
+
     stims_filt = stims[trial_mask_left_lick_left_stim, :]
     cue_times_filt = cue_times[:, trial_mask_left_lick_left_stim]
     t_perts = stims_filt[:, 2] - cue_times_filt[0,:]
@@ -328,7 +329,7 @@ if __name__ == '__main__':
 
     projs_all -= np.mean(projs_all,axis=0)
 
-    proj_cues = np.linalg.norm(projs_all[:idx_end,:], axis=0)
+    proj_cues = np.linalg.norm(projs_all, axis=0)
 
     proj_cues /= np.max(proj_cues,axis=0)
     print('done')
@@ -344,7 +345,7 @@ if __name__ == '__main__':
         plt.scatter([2] * sum(wrong_mask), proj_cues[wrong_mask, i], c='k', marker='.', s=10)
         plt.scatter([3] * sum(no_mask), proj_cues[no_mask, i], c='k', marker='.', s=10)
         plt.axhline(0)
-        plt.title("Norm of PC Trajectory After Cue Time, PC " + str(i))
+        plt.title("Norm of PC Trajectory, PC " + str(i))
         plt.ylabel("Projection Strength (Normalized)")
         plt.xticks([1, 2, 3], labels=['Correct Lick', 'Incorrect Lick', 'No Response'])
         plt.savefig('correctness_pc_{0}.png'.format(i), bbox_inches='tight', dpi=128)
@@ -357,11 +358,11 @@ if __name__ == '__main__':
     plt.scatter([2] * sum(wrong_mask), (proj_cues).mean(axis=1)[wrong_mask], c='k', marker='.', s=10)
     plt.scatter([3] * sum(no_mask), (proj_cues).mean(axis=1)[no_mask], c='k', marker='.', s=10)
     plt.axhline(0)
-    plt.title("Projection Strength at Cue Time, Mean of PC Projections")
+    plt.title("Projection Strength, Mean ")
     plt.ylabel("Projection Strength (Normalized)")
     plt.xticks([1, 2, 3], labels=['Correct Lick', 'Incorrect Lick', 'No Response'])
     plt.savefig('correctness_all_pcs.png',bbox_inches='tight', dpi=128)
-    plt.show()
+
 
     # endregion
 
@@ -372,50 +373,65 @@ if __name__ == '__main__':
 
     projs_all = (A_all @ components[:, 0]).reshape((num_bins, num_trials_left, 1))
 
-    us,vs =  nonnegative_pca(A)
-    vm = vs[-1]
+    A_curr = A.copy()
+    pcs = np.zeros((A.shape[1], num_pcs))
+    for j in range(num_pcs):
+        us,vs =  nonnegative_pca(A_curr)
+        vm = vs[-1]
+        pcs[:, j] = vm
+        A_curr -= np.expand_dims(A_curr @ vm,axis=1) * np.expand_dims(vm,axis=1).T
 
-    projs = (A @ components[:,0]).reshape(num_bins,num_trials)
-    projs_nn = (A @ vm).reshape((num_bins, num_trials, 1))
+    projs = (A @ components).reshape(num_bins,num_trials)
+    projs_nn = (A @ pcs).reshape((num_bins, num_trials, num_pcs))
 
     if stationary and stationary_invert:
         projs = np.cumsum(projs,axis=0)
         projs_nn = np.cumsum(projs_nn,axis=0)
 
-    proj_cues =    np.expand_dims(np.linalg.norm(projs, axis=0),axis=1)
-    proj_cues_nn = np.linalg.norm(projs_nn, axis=0)
 
-    outcomes = session.get_behavior_report()[trial_mask_left_lick_no_stim]
-    right_mask = outcomes == 1
-    wrong_mask = outcomes == 0
-    no_mask = outcomes == -1
+    demean=True
+    if demean:
+        projs -= np.mean(projs, axis=0)
+        projs_nn -= np.mean(projs_nn, axis=0)
 
-    i=0
-    plt.figure('pc ' + str(i) + ' error')
-    plt.clf()
-    plt.boxplot([proj_cues[right_mask, i], proj_cues[wrong_mask, i], proj_cues[no_mask, i]], sym='', meanline=True,
-                showmeans=True)
-    plt.scatter([1] * sum(right_mask), proj_cues[right_mask, i], c='k', marker='.', s=10)
-    plt.scatter([2] * sum(wrong_mask), proj_cues[wrong_mask, i], c='k', marker='.', s=10)
-    plt.scatter([3] * sum(no_mask), proj_cues[no_mask, i], c='k', marker='.', s=10)
-    plt.axhline(0)
-    plt.title("Norm of PC Trajectory After Cue Time, PC " + str(i))
-    plt.ylabel("Projection Strength (Normalized)")
-    plt.xticks([1, 2, 3], labels=['Correct Lick', 'Incorrect Lick', 'No Response'])
 
-    i = 0
-    plt.figure('pc ' + str(i) + ' error nn')
-    plt.clf()
-    plt.boxplot([proj_cues_nn[right_mask, i], proj_cues_nn[wrong_mask, i], proj_cues_nn[no_mask, i]], sym='', meanline=True,
-                showmeans=True)
-    plt.scatter([1] * sum(right_mask), proj_cues_nn[right_mask, i], c='k', marker='.', s=10)
-    plt.scatter([2] * sum(wrong_mask), proj_cues_nn[wrong_mask, i], c='k', marker='.', s=10)
-    plt.scatter([3] * sum(no_mask), proj_cues_nn[no_mask, i], c='k', marker='.', s=10)
-    plt.axhline(0)
-    plt.title("Norm of PC Trajectory After Cue Time, PC " + str(i))
-    plt.ylabel("Projection Strength (Normalized)")
-    plt.xticks([1, 2, 3], labels=['Correct Lick', 'Incorrect Lick', 'No Response'])
+    proj_cues =  np.linalg.norm(projs[:,:,:], axis=0)
+    proj_cues /= np.max(proj_cues, axis=0)
+    proj_cues_nn = np.linalg.norm(projs_nn[:,:,:], axis=0)
+    proj_cues_nn /= np.max(proj_cues_nn, axis=0)
+
+
     # endregion
+    outcomes = session.get_behavior_report()[trial_mask_left_lick_no_stim]
+    for i in range(num_pcs):
+        right_mask = outcomes == 1
+        wrong_mask = outcomes == 0
+        no_mask = outcomes == -1
+
+        # plt.figure('pc ' + str(i) + ' error')
+        # plt.clf()
+        # plt.boxplot([proj_cues[right_mask, i], proj_cues[wrong_mask, i], proj_cues[no_mask, i]], sym='', meanline=True,
+        #             showmeans=True)
+        # plt.scatter([1] * sum(right_mask), proj_cues[right_mask, i], c='k', marker='.', s=10)
+        # plt.scatter([2] * sum(wrong_mask), proj_cues[wrong_mask, i], c='k', marker='.', s=10)
+        # plt.scatter([3] * sum(no_mask), proj_cues[no_mask, i], c='k', marker='.', s=10)
+        # plt.axhline(0)
+        # plt.title("Norm of PC Trajectory, PC " + str(i))
+        # plt.ylabel("Projection Strength (Normalized)")
+        # plt.xticks([1, 2, 3], labels=['Correct Lick', 'Incorrect Lick', 'No Response'])
+
+
+        plt.figure('pc ' + str(i) + ' error nn')
+        plt.clf()
+        plt.boxplot([proj_cues_nn[right_mask, i], proj_cues_nn[wrong_mask, i], proj_cues_nn[no_mask, i]], sym='', meanline=True,
+                    showmeans=True)
+        plt.scatter([1] * sum(right_mask), proj_cues_nn[right_mask, i], c='k', marker='.', s=10)
+        plt.scatter([2] * sum(wrong_mask), proj_cues_nn[wrong_mask, i], c='k', marker='.', s=10)
+        plt.scatter([3] * sum(no_mask), proj_cues_nn[no_mask, i], c='k', marker='.', s=10)
+        plt.axhline(0)
+        plt.title("Norm of PC Trajectory, PC " + str(i))
+        plt.ylabel("Projection Strength (Normalized)")
+        plt.xticks([1, 2, 3], labels=['Correct Lick', 'Incorrect Lick', 'No Response'])
 
 # region old code
 
